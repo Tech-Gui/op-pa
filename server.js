@@ -6,7 +6,7 @@ const waterRoutes = require("./routes/water");
 require("dotenv").config();
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 8080;
 
 // Middleware
 app.use(cors());
@@ -56,8 +56,14 @@ app.use((req, res) => {
   res.status(404).json({ error: "Endpoint not found" });
 });
 
-app.listen(PORT, () => {
-  console.log(`Smart Farming Backend running on port ${PORT}`);
+// app.listen(PORT, () => {
+//   console.log(`Smart Farming Backend running on port ${PORT}`);
+//   console.log(`Health check: http://localhost:${PORT}/health`);
+// });
+
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`Server running on port ${PORT}`);
+  console.log(`Environment: ${process.env.NODE_ENV || "development"}`);
   console.log(`Health check: http://localhost:${PORT}/health`);
 });
 
