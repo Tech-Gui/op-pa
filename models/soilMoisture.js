@@ -1,13 +1,197 @@
 const mongoose = require("mongoose");
 
-// Soil Moisture Reading Schema
+// Crop Profile Schema - Updated with detailed stage information
+const cropProfileSchema = new mongoose.Schema(
+  {
+    cropType: {
+      type: String,
+      required: true,
+      unique: true,
+    },
+    name: {
+      type: String,
+      required: true,
+    },
+    duration: {
+      type: Number,
+      required: true, // Total days from planting to harvest
+    },
+    description: {
+      type: String,
+      default: "",
+    },
+    stages: [
+      {
+        name: {
+          type: String,
+          required: true,
+        },
+        startDay: {
+          type: Number,
+          required: true,
+        },
+        endDay: {
+          type: Number,
+          required: true,
+        },
+        minMoisture: {
+          type: Number,
+          required: true,
+          min: 0,
+          max: 100,
+        },
+        maxMoisture: {
+          type: Number,
+          required: true,
+          min: 0,
+          max: 100,
+        },
+        color: {
+          type: String,
+          default: "#6B7280",
+        },
+        description: {
+          type: String,
+          default: "",
+        },
+        // Optional irrigation frequency for this stage
+        irrigationFrequency: {
+          type: String,
+          enum: ["low", "medium", "high"],
+          default: "medium",
+        },
+        // Critical stage indicator
+        isCritical: {
+          type: Boolean,
+          default: false,
+        },
+      },
+    ],
+    // Environmental preferences
+    temperatureRange: {
+      min: { type: Number, default: 15 },
+      max: { type: Number, default: 30 },
+    },
+    // Water requirements
+    waterRequirements: {
+      type: String,
+      enum: ["low", "medium", "high"],
+      default: "medium",
+    },
+    isActive: {
+      type: Boolean,
+      default: true,
+    },
+  },
+  {
+    timestamps: true,
+  }
+);
+
+// Zone Configuration Schema - Updated to reference crop profiles
+const zoneConfigSchema = new mongoose.Schema(
+  {
+    zoneId: {
+      type: String,
+      required: true,
+      unique: true,
+    },
+    name: {
+      type: String,
+      required: true,
+    },
+    fieldName: {
+      type: String,
+      required: true,
+    },
+    area: {
+      type: Number,
+      required: true,
+    },
+    cropType: {
+      type: String,
+      required: true,
+      ref: "CropProfile", // Reference to crop profile
+    },
+    plantingDate: {
+      type: Date,
+      required: true,
+    },
+    // Static fallback thresholds (used if no crop profile or override needed)
+    moistureThresholds: {
+      minMoisture: {
+        type: Number,
+        required: true,
+        min: 0,
+        max: 100,
+      },
+      maxMoisture: {
+        type: Number,
+        required: true,
+        min: 0,
+        max: 100,
+      },
+    },
+    // Current stage tracking
+    currentStage: {
+      stageName: String,
+      stageIndex: Number,
+      dayInStage: Number,
+      startDate: Date,
+    },
+    irrigationSettings: {
+      enabled: {
+        type: Boolean,
+        default: true,
+      },
+      durationMinutes: {
+        type: Number,
+        default: 30,
+      },
+      cooldownMinutes: {
+        type: Number,
+        default: 120,
+      },
+      // Override to use static thresholds instead of crop profile
+      useStaticThresholds: {
+        type: Boolean,
+        default: false,
+      },
+    },
+    sensorId: {
+      type: String,
+      default: null,
+    },
+    relayId: {
+      type: String,
+      default: null,
+    },
+    isActive: {
+      type: Boolean,
+      default: true,
+    },
+    lastIrrigation: {
+      type: Date,
+      default: null,
+    },
+    notes: {
+      type: String,
+      default: "",
+    },
+  },
+  {
+    timestamps: true,
+  }
+);
+
+// Soil Moisture Reading Schema - Enhanced
 const soilMoistureReadingSchema = new mongoose.Schema(
   {
     zoneId: {
       type: String,
       default: "main_zone",
       required: true,
-      index: true, // Index for faster queries
+      index: true,
     },
     sensorId: {
       type: String,
@@ -37,89 +221,17 @@ const soilMoistureReadingSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    // Stage information at time of reading
+    stageInfo: {
+      stageName: String,
+      dayInStage: Number,
+      targetMinMoisture: Number,
+      targetMaxMoisture: Number,
+    },
     timestamp: {
       type: Date,
       default: Date.now,
-      index: true, // Index for time-based queries
-    },
-  },
-  {
-    timestamps: true, // Adds createdAt and updatedAt automatically
-  }
-);
-
-// Zone Configuration Schema
-const zoneConfigSchema = new mongoose.Schema(
-  {
-    zoneId: {
-      type: String,
-      required: true,
-      unique: true,
-    },
-    name: {
-      type: String,
-      required: true,
-    },
-    fieldName: {
-      type: String,
-      required: true,
-    },
-    area: {
-      type: Number,
-      required: true,
-    },
-    cropType: {
-      type: String,
-      required: true,
-      enum: ["tomatoes", "maize", "lettuce", "peppers", "custom"],
-    },
-    plantingDate: {
-      type: Date,
-      required: true,
-    },
-    moistureThresholds: {
-      minMoisture: {
-        type: Number,
-        required: true,
-        min: 0,
-        max: 100,
-      },
-      maxMoisture: {
-        type: Number,
-        required: true,
-        min: 0,
-        max: 100,
-      },
-    },
-    irrigationSettings: {
-      enabled: {
-        type: Boolean,
-        default: true,
-      },
-      durationMinutes: {
-        type: Number,
-        default: 30,
-      },
-      cooldownMinutes: {
-        type: Number,
-        default: 120,
-      },
-    },
-    sensorId: {
-      type: String,
-      default: null,
-    },
-    relayId: {
-      type: String,
-      default: null,
-    },
-    isActive: {
-      type: Boolean,
-      default: true,
-    },
-    lastIrrigation: {
-      type: Date,
-      default: null,
+      index: true,
     },
   },
   {
@@ -127,38 +239,7 @@ const zoneConfigSchema = new mongoose.Schema(
   }
 );
 
-// Crop Profile Schema
-const cropProfileSchema = new mongoose.Schema(
-  {
-    cropType: {
-      type: String,
-      required: true,
-      unique: true,
-    },
-    name: {
-      type: String,
-      required: true,
-    },
-    duration: {
-      type: Number,
-      required: true,
-    },
-    stages: [
-      {
-        name: String,
-        days: Number,
-        minMoisture: Number,
-        maxMoisture: Number,
-        color: String,
-      },
-    ],
-  },
-  {
-    timestamps: true,
-  }
-);
-
-// Irrigation Log Schema
+// Irrigation Log Schema - Enhanced
 const irrigationLogSchema = new mongoose.Schema(
   {
     zoneId: {
@@ -177,21 +258,35 @@ const irrigationLogSchema = new mongoose.Schema(
     },
     trigger: {
       type: String,
-      enum: ["automatic", "manual", "scheduled"],
+      enum: ["automatic", "manual", "scheduled", "stage_change"],
       required: true,
     },
     moistureLevel: {
       type: Number,
       required: true,
     },
+    targetMoisture: {
+      type: Number,
+      default: null,
+    },
     duration: {
       type: Number,
       default: null, // Will be set when irrigation stops
+    },
+    // Stage context
+    stageInfo: {
+      stageName: String,
+      dayInStage: Number,
+      dayInCrop: Number,
     },
     timestamp: {
       type: Date,
       default: Date.now,
       index: true,
+    },
+    notes: {
+      type: String,
+      default: "",
     },
   },
   {
@@ -199,107 +294,113 @@ const irrigationLogSchema = new mongoose.Schema(
   }
 );
 
-// Add compound index for efficient queries
-soilMoistureReadingSchema.index({ zoneId: 1, timestamp: -1 });
-
-// Virtual for calculating water volume (if tank config is available)
-soilMoistureReadingSchema.virtual("estimatedVolumeLiters").get(function () {
-  if (this.moisturePercentage && this.populated("zoneConfig")) {
-    // This could be expanded to calculate estimated water needed
+// Virtual for calculating current stage from planting date
+zoneConfigSchema.virtual("growthStage").get(function () {
+  if (!this.plantingDate || !this.populated("cropProfile")) {
     return null;
   }
-  return null;
+
+  const daysSincePlanting = Math.floor(
+    (Date.now() - this.plantingDate.getTime()) / (1000 * 60 * 60 * 24)
+  );
+  const cropProfile = this.populated("cropProfile");
+
+  if (!cropProfile || !cropProfile.stages) return null;
+
+  // Find current stage
+  for (let i = 0; i < cropProfile.stages.length; i++) {
+    const stage = cropProfile.stages[i];
+    if (
+      daysSincePlanting >= stage.startDay &&
+      daysSincePlanting <= stage.endDay
+    ) {
+      return {
+        stage: stage,
+        stageIndex: i,
+        dayInStage: daysSincePlanting - stage.startDay + 1,
+        dayInCrop: daysSincePlanting,
+        progress: (daysSincePlanting / cropProfile.duration) * 100,
+      };
+    }
+  }
+
+  // If past all stages, return last stage
+  const lastStage = cropProfile.stages[cropProfile.stages.length - 1];
+  return {
+    stage: lastStage,
+    stageIndex: cropProfile.stages.length - 1,
+    dayInStage: daysSincePlanting - lastStage.startDay + 1,
+    dayInCrop: daysSincePlanting,
+    progress: 100,
+  };
 });
 
-// Virtual for calculating moisture status
-soilMoistureReadingSchema.virtual("moistureStatus").get(function () {
-  if (this.moisturePercentage >= 70) return "optimal";
-  if (this.moisturePercentage >= 50) return "good";
-  if (this.moisturePercentage >= 30) return "low";
-  return "critical";
-});
-
-// Static method to get latest reading for a zone
-soilMoistureReadingSchema.statics.getLatestByZone = function (zoneId) {
-  return this.findOne({ zoneId }).sort({ timestamp: -1 });
-};
-
-// Static method to get readings in date range
-soilMoistureReadingSchema.statics.getByDateRange = function (
-  zoneId,
-  startDate,
-  endDate
-) {
-  return this.find({
-    zoneId,
-    timestamp: {
-      $gte: new Date(startDate),
-      $lte: new Date(endDate),
-    },
-  }).sort({ timestamp: -1 });
-};
-
-// Static method to get zone statistics
-soilMoistureReadingSchema.statics.getZoneStats = async function (
-  zoneId,
-  hours = 24
-) {
-  const startDate = new Date();
-  startDate.setHours(startDate.getHours() - hours);
-
-  const readings = await this.find({
-    zoneId,
-    timestamp: { $gte: startDate },
-    moisturePercentage: { $ne: null },
-  });
-
-  if (readings.length === 0) {
+// Method to get current moisture targets based on growth stage
+zoneConfigSchema.methods.getCurrentMoistureTargets = async function () {
+  if (this.irrigationSettings.useStaticThresholds) {
     return {
-      zoneId,
-      readingCount: 0,
-      averageMoisture: null,
-      minMoisture: null,
-      maxMoisture: null,
-      latestReading: null,
+      minMoisture: this.moistureThresholds.minMoisture,
+      maxMoisture: this.moistureThresholds.maxMoisture,
+      source: "static",
     };
   }
 
-  const moistureValues = readings.map((r) => r.moisturePercentage);
-  const latest = await this.getLatestByZone(zoneId);
+  // Get crop profile
+  const CropProfile = mongoose.model("CropProfile");
+  const cropProfile = await CropProfile.findOne({ cropType: this.cropType });
 
+  if (!cropProfile) {
+    return {
+      minMoisture: this.moistureThresholds.minMoisture,
+      maxMoisture: this.moistureThresholds.maxMoisture,
+      source: "fallback",
+    };
+  }
+
+  const daysSincePlanting = Math.floor(
+    (Date.now() - this.plantingDate.getTime()) / (1000 * 60 * 60 * 24)
+  );
+
+  // Find current stage
+  for (const stage of cropProfile.stages) {
+    if (
+      daysSincePlanting >= stage.startDay &&
+      daysSincePlanting <= stage.endDay
+    ) {
+      return {
+        minMoisture: stage.minMoisture,
+        maxMoisture: stage.maxMoisture,
+        stageName: stage.name,
+        stageDescription: stage.description,
+        dayInStage: daysSincePlanting - stage.startDay + 1,
+        source: "crop_profile",
+      };
+    }
+  }
+
+  // If past all stages, use last stage
+  const lastStage = cropProfile.stages[cropProfile.stages.length - 1];
   return {
-    zoneId,
-    readingCount: readings.length,
-    averageMoisture:
-      Math.round(
-        (moistureValues.reduce((a, b) => a + b, 0) / moistureValues.length) *
-          100
-      ) / 100,
-    minMoisture: Math.min(...moistureValues),
-    maxMoisture: Math.max(...moistureValues),
-    latestReading: latest,
-    periodHours: hours,
+    minMoisture: lastStage.minMoisture,
+    maxMoisture: lastStage.maxMoisture,
+    stageName: lastStage.name,
+    stageDescription: lastStage.description,
+    dayInStage: daysSincePlanting - lastStage.startDay + 1,
+    source: "crop_profile_final",
   };
 };
 
-// Instance method to check if water level is low
-soilMoistureReadingSchema.methods.isLowMoisture = async function () {
-  const ZoneConfig = mongoose.model("ZoneConfig");
-  const zoneConfig = await ZoneConfig.findOne({ zoneId: this.zoneId });
-  if (!zoneConfig || !this.moisturePercentage) return false;
-
-  return this.moisturePercentage <= zoneConfig.moistureThresholds.minMoisture;
-};
-
-// Instance method to check if irrigation should be triggered
+// Enhanced irrigation triggering method
 soilMoistureReadingSchema.methods.shouldTriggerIrrigation = async function () {
   const ZoneConfig = mongoose.model("ZoneConfig");
   const zoneConfig = await ZoneConfig.findOne({ zoneId: this.zoneId });
   if (!zoneConfig || !zoneConfig.irrigationSettings.enabled) return false;
 
+  // Get current moisture targets (stage-based or static)
+  const targets = await zoneConfig.getCurrentMoistureTargets();
+
   // Check if moisture is below threshold
-  if (this.moisturePercentage >= zoneConfig.moistureThresholds.minMoisture)
-    return false;
+  if (this.moisturePercentage >= targets.minMoisture) return false;
 
   // Check cooldown period
   if (zoneConfig.lastIrrigation) {
@@ -310,15 +411,21 @@ soilMoistureReadingSchema.methods.shouldTriggerIrrigation = async function () {
     if (timeSinceLastIrrigation < cooldownMs) return false;
   }
 
+  // Store stage info for this reading
+  this.stageInfo = {
+    stageName: targets.stageName,
+    dayInStage: targets.dayInStage,
+    targetMinMoisture: targets.minMoisture,
+    targetMaxMoisture: targets.maxMoisture,
+  };
+
   return true;
 };
 
-// Pre-save middleware to calculate moisture status
-soilMoistureReadingSchema.pre("save", async function (next) {
-  // You can add any pre-save logic here
-  // For example, validation or calculations
-  next();
-});
+// Add compound indexes
+soilMoistureReadingSchema.index({ zoneId: 1, timestamp: -1 });
+zoneConfigSchema.index({ cropType: 1, isActive: 1 });
+cropProfileSchema.index({ cropType: 1, isActive: 1 });
 
 // Create models
 const SoilMoistureReading = mongoose.model(
