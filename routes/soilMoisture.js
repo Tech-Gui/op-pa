@@ -1,11 +1,6 @@
 const express = require("express");
 const router = express.Router();
-const {
-  SoilMoistureReading,
-  ZoneConfig,
-  CropProfile,
-  IrrigationLog,
-} = require("../models/soilMoisture");
+const database = require("../database");
 
 // POST /api/soil/reading - Submit new soil moisture reading
 router.post("/reading", async (req, res) => {
@@ -28,7 +23,9 @@ router.post("/reading", async (req, res) => {
     // Find zone by sensor_id if zone_id not provided
     let zoneId = zone_id;
     if (!zoneId && sensor_id) {
-      const zoneConfig = await ZoneConfig.findOne({ sensorId: sensor_id });
+      const zoneConfig = await database.ZoneConfig.findOne({
+        sensorId: sensor_id,
+      });
       if (zoneConfig) {
         zoneId = zoneConfig.zoneId;
       }
@@ -50,7 +47,7 @@ router.post("/reading", async (req, res) => {
       relayStatus: relay_status || "auto",
     };
 
-    const reading = new SoilMoistureReading(readingData);
+    const reading = new database.SoilMoistureReading(readingData);
 
     // Check if irrigation should be triggered
     const shouldIrrigate = await reading.shouldTriggerIrrigation();
@@ -60,7 +57,7 @@ router.post("/reading", async (req, res) => {
 
     // Update zone's last irrigation if triggered
     if (shouldIrrigate) {
-      await ZoneConfig.findOneAndUpdate(
+      await database.ZoneConfig.findOneAndUpdate(
         { zoneId },
         { lastIrrigation: new Date() }
       );
@@ -96,7 +93,7 @@ router.get("/latest", async (req, res) => {
       });
     }
 
-    const reading = await SoilMoistureReading.findOne(query).sort({
+    const reading = await database.SoilMoistureReading.findOne(query).sort({
       timestamp: -1,
     });
 
@@ -130,7 +127,9 @@ router.get("/zone-config", async (req, res) => {
       });
     }
 
-    const zoneConfig = await ZoneConfig.findOne({ sensorId: sensor_id });
+    const zoneConfig = await database.ZoneConfig.findOne({
+      sensorId: sensor_id,
+    });
 
     if (!zoneConfig) {
       return res.status(404).json({
@@ -146,7 +145,7 @@ router.get("/zone-config", async (req, res) => {
     );
 
     // Get crop profile
-    const cropProfile = await CropProfile.findOne({
+    const cropProfile = await database.CropProfile.findOne({
       cropType: zoneConfig.cropType,
     });
 
@@ -235,7 +234,7 @@ router.post("/zone", async (req, res) => {
       relayId: relay_id || null,
     };
 
-    const updatedZone = await ZoneConfig.findOneAndUpdate(
+    const updatedZone = await database.ZoneConfig.findOneAndUpdate(
       { zoneId: zone_id },
       zoneData,
       { new: true, upsert: true }
@@ -258,17 +257,19 @@ router.post("/zone", async (req, res) => {
 // GET /api/soil/zones - Get all zones
 router.get("/zones", async (req, res) => {
   try {
-    const zones = await ZoneConfig.find({ isActive: true }).sort({
+    const zones = await database.ZoneConfig.find({ isActive: true }).sort({
       createdAt: 1,
     });
 
     // Get latest readings for each zone
     const zonesWithReadings = await Promise.all(
       zones.map(async (zone) => {
-        const latestReading = await SoilMoistureReading.getLatestByZone(
-          zone.zoneId
+        const latestReading =
+          await database.SoilMoistureReading.getLatestByZone(zone.zoneId);
+        const stats = await database.SoilMoistureReading.getZoneStats(
+          zone.zoneId,
+          24
         );
-        const stats = await SoilMoistureReading.getZoneStats(zone.zoneId, 24);
 
         return {
           ...zone.toObject(),
@@ -303,7 +304,7 @@ router.post("/irrigation", async (req, res) => {
       });
     }
 
-    const zoneConfig = await ZoneConfig.findOne({ zoneId: zone_id });
+    const zoneConfig = await database.ZoneConfig.findOne({ zoneId: zone_id });
     if (!zoneConfig) {
       return res.status(404).json({
         error: "Zone not found",
@@ -311,11 +312,13 @@ router.post("/irrigation", async (req, res) => {
     }
 
     // Get latest moisture reading
-    const latestReading = await SoilMoistureReading.getLatestByZone(zone_id);
+    const latestReading = await database.SoilMoistureReading.getLatestByZone(
+      zone_id
+    );
     const moistureLevel = latestReading ? latestReading.moisturePercentage : 0;
 
     // Log the irrigation action
-    const irrigationLog = new IrrigationLog({
+    const irrigationLog = new database.IrrigationLog({
       zoneId: zone_id,
       relayId: relay_id || zoneConfig.relayId || "unknown",
       action,
@@ -327,7 +330,7 @@ router.post("/irrigation", async (req, res) => {
 
     // Update zone's last irrigation time if starting
     if (action === "start") {
-      await ZoneConfig.findOneAndUpdate(
+      await database.ZoneConfig.findOneAndUpdate(
         { zoneId: zone_id },
         { lastIrrigation: new Date() }
       );
@@ -365,18 +368,22 @@ router.get("/irrigation/status", async (req, res) => {
     }
 
     // Get latest irrigation logs
-    const latestLog = await IrrigationLog.findOne({ zoneId: zone_id }).sort({
+    const latestLog = await database.IrrigationLog.findOne({
+      zoneId: zone_id,
+    }).sort({
       timestamp: -1,
     });
-    const latestReading = await SoilMoistureReading.getLatestByZone(zone_id);
-    const zoneConfig = await ZoneConfig.findOne({ zoneId: zone_id });
+    const latestReading = await database.SoilMoistureReading.getLatestByZone(
+      zone_id
+    );
+    const zoneConfig = await database.ZoneConfig.findOne({ zoneId: zone_id });
 
     let isIrrigating = false;
     let irrigationStartTime = null;
 
     if (latestLog && latestLog.action === "start") {
       // Check if there's a corresponding stop action
-      const stopLog = await IrrigationLog.findOne({
+      const stopLog = await database.IrrigationLog.findOne({
         zoneId: zone_id,
         action: "stop",
         timestamp: { $gt: latestLog.timestamp },
