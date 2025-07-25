@@ -1,5 +1,11 @@
 const mongoose = require("mongoose");
 const { WaterReading, TankConfig } = require("./models/water");
+const {
+  SoilMoistureReading,
+  ZoneConfig,
+  CropProfile,
+  IrrigationLog,
+} = require("./models/soilMoisture");
 require("dotenv").config();
 
 // MongoDB connection string - can be set via environment variable
@@ -18,6 +24,9 @@ async function init() {
 
     // Create default tank configuration if it doesn't exist
     await createDefaultTank();
+
+    // Create default crop profiles if they don't exist
+    await createDefaultCropProfiles();
   } catch (error) {
     console.error("Error connecting to MongoDB:", error);
     process.exit(1);
@@ -45,6 +54,174 @@ async function createDefaultTank() {
     }
   } catch (error) {
     console.error("Error creating default tank:", error);
+  }
+}
+
+// Create default crop profiles
+async function createDefaultCropProfiles() {
+  try {
+    const profiles = [
+      {
+        cropType: "tomatoes",
+        name: "Tomatoes",
+        duration: 120,
+        stages: [
+          {
+            name: "Seedling",
+            days: 14,
+            minMoisture: 70,
+            maxMoisture: 80,
+            color: "#10B981",
+          },
+          {
+            name: "Vegetative",
+            days: 35,
+            minMoisture: 65,
+            maxMoisture: 75,
+            color: "#059669",
+          },
+          {
+            name: "Flowering",
+            days: 21,
+            minMoisture: 60,
+            maxMoisture: 70,
+            color: "#047857",
+          },
+          {
+            name: "Fruit Development",
+            days: 35,
+            minMoisture: 65,
+            maxMoisture: 75,
+            color: "#065F46",
+          },
+          {
+            name: "Ripening",
+            days: 15,
+            minMoisture: 55,
+            maxMoisture: 65,
+            color: "#064E3B",
+          },
+        ],
+      },
+      {
+        cropType: "maize",
+        name: "Maize/Corn",
+        duration: 110,
+        stages: [
+          {
+            name: "Germination",
+            days: 10,
+            minMoisture: 75,
+            maxMoisture: 85,
+            color: "#F59E0B",
+          },
+          {
+            name: "Vegetative",
+            days: 40,
+            minMoisture: 65,
+            maxMoisture: 75,
+            color: "#D97706",
+          },
+          {
+            name: "Tasseling",
+            days: 20,
+            minMoisture: 70,
+            maxMoisture: 80,
+            color: "#B45309",
+          },
+          {
+            name: "Grain Filling",
+            days: 30,
+            minMoisture: 60,
+            maxMoisture: 70,
+            color: "#92400E",
+          },
+          {
+            name: "Maturity",
+            days: 10,
+            minMoisture: 50,
+            maxMoisture: 60,
+            color: "#78350F",
+          },
+        ],
+      },
+      {
+        cropType: "lettuce",
+        name: "Lettuce",
+        duration: 65,
+        stages: [
+          {
+            name: "Seedling",
+            days: 14,
+            minMoisture: 75,
+            maxMoisture: 85,
+            color: "#8B5CF6",
+          },
+          {
+            name: "Vegetative",
+            days: 35,
+            minMoisture: 70,
+            maxMoisture: 80,
+            color: "#7C3AED",
+          },
+          {
+            name: "Head Formation",
+            days: 16,
+            minMoisture: 65,
+            maxMoisture: 75,
+            color: "#6D28D9",
+          },
+        ],
+      },
+      {
+        cropType: "peppers",
+        name: "Peppers",
+        duration: 100,
+        stages: [
+          {
+            name: "Seedling",
+            days: 21,
+            minMoisture: 70,
+            maxMoisture: 80,
+            color: "#EF4444",
+          },
+          {
+            name: "Vegetative",
+            days: 35,
+            minMoisture: 65,
+            maxMoisture: 75,
+            color: "#DC2626",
+          },
+          {
+            name: "Flowering",
+            days: 24,
+            minMoisture: 60,
+            maxMoisture: 70,
+            color: "#B91C1C",
+          },
+          {
+            name: "Fruit Development",
+            days: 20,
+            minMoisture: 65,
+            maxMoisture: 75,
+            color: "#991B1B",
+          },
+        ],
+      },
+    ];
+
+    for (const profileData of profiles) {
+      const existingProfile = await CropProfile.findOne({
+        cropType: profileData.cropType,
+      });
+      if (!existingProfile) {
+        const profile = new CropProfile(profileData);
+        await profile.save();
+        console.log(`Default crop profile created: ${profileData.name}`);
+      }
+    }
+  } catch (error) {
+    console.error("Error creating default crop profiles:", error);
   }
 }
 
@@ -190,7 +367,12 @@ module.exports = {
   getTankStats,
   getAllTanks,
   close,
-  // Export models for direct use if needed
+  // Export water models
   WaterReading,
   TankConfig,
+  // Export soil moisture models
+  SoilMoistureReading,
+  ZoneConfig,
+  CropProfile,
+  IrrigationLog,
 };
