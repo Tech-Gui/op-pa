@@ -3,6 +3,7 @@ const cors = require("cors");
 const bodyParser = require("body-parser");
 const database = require("./database");
 const waterRoutes = require("./routes/water");
+const soilmoistureRoutes = require("./routes/soilMoisture");
 require("dotenv").config();
 
 const app = express();
@@ -18,6 +19,7 @@ database.init();
 
 // Routes
 app.use("/api/water", waterRoutes);
+app.use("/api/soilmoisture", soilmoistureRoutes);
 
 // Health check endpoint
 app.get("/health", (req, res) => {
