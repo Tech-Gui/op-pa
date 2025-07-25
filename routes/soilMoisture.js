@@ -2,7 +2,7 @@ const express = require("express");
 const router = express.Router();
 const database = require("../database");
 
-// POST /api/soil/reading - Submit new soil moisture reading (Enhanced)
+// POST /api/soil/reading - Submit new soil moisture reading (Enhanced with better error handling)
 router.post("/reading", async (req, res) => {
   try {
     const {
@@ -41,15 +41,42 @@ router.post("/reading", async (req, res) => {
     }
 
     // Get current moisture targets based on growth stage
-    let stageInfo = null;
+    let stageInfo = {
+      stageName: null,
+      dayInStage: null,
+      targetMinMoisture: null,
+      targetMaxMoisture: null,
+    };
+
     if (zoneConfig) {
-      const targets = await zoneConfig.getCurrentMoistureTargets();
-      stageInfo = {
-        stageName: targets.stageName,
-        dayInStage: targets.dayInStage,
-        targetMinMoisture: targets.minMoisture,
-        targetMaxMoisture: targets.maxMoisture,
-      };
+      try {
+        const targets = await zoneConfig.getCurrentMoistureTargets();
+
+        // FIXED: Validate targets before using them
+        if (
+          targets.stageName &&
+          targets.dayInStage &&
+          !isNaN(targets.dayInStage)
+        ) {
+          stageInfo = {
+            stageName: targets.stageName,
+            dayInStage: Math.max(1, Math.floor(targets.dayInStage)), // Ensure integer >= 1
+            targetMinMoisture: targets.minMoisture,
+            targetMaxMoisture: targets.maxMoisture,
+          };
+        } else {
+          // Use fallback values if stage calculation failed
+          stageInfo = {
+            stageName: targets.stageName || null,
+            dayInStage: null, // Don't set if invalid
+            targetMinMoisture: targets.minMoisture,
+            targetMaxMoisture: targets.maxMoisture,
+          };
+        }
+      } catch (error) {
+        console.error("Error getting moisture targets:", error);
+        // Continue with null stageInfo
+      }
     }
 
     const readingData = {
@@ -65,8 +92,14 @@ router.post("/reading", async (req, res) => {
     const reading = new database.SoilMoistureReading(readingData);
 
     // Check if irrigation should be triggered
-    const shouldIrrigate = await reading.shouldTriggerIrrigation();
-    reading.irrigationTriggered = shouldIrrigate;
+    let shouldIrrigate = false;
+    try {
+      shouldIrrigate = await reading.shouldTriggerIrrigation();
+      reading.irrigationTriggered = shouldIrrigate;
+    } catch (error) {
+      console.error("Error checking irrigation trigger:", error);
+      reading.irrigationTriggered = false;
+    }
 
     const savedReading = await reading.save();
 
@@ -115,18 +148,33 @@ router.get("/zone-config", async (req, res) => {
       });
     }
 
-    // Get current moisture targets from growth stage
-    const targets = await zoneConfig.getCurrentMoistureTargets();
+    // Get current moisture targets from growth stage with error handling
+    let targets;
+    try {
+      targets = await zoneConfig.getCurrentMoistureTargets();
+    } catch (error) {
+      console.error("Error getting targets for ESP32 config:", error);
+      // Use fallback targets
+      targets = {
+        minMoisture: zoneConfig.moistureThresholds.minMoisture,
+        maxMoisture: zoneConfig.moistureThresholds.maxMoisture,
+        source: "fallback_error",
+      };
+    }
 
     // Get crop profile for additional info
     const cropProfile = await database.CropProfile.findOne({
       cropType: zoneConfig.cropType,
     });
 
-    // Calculate growth progress
-    const daysSincePlanting = Math.floor(
-      (Date.now() - zoneConfig.plantingDate.getTime()) / (1000 * 60 * 60 * 24)
-    );
+    // Calculate growth progress with validation
+    let daysSincePlanting = 1;
+    if (zoneConfig.plantingDate && !isNaN(zoneConfig.plantingDate.getTime())) {
+      const calculated = Math.floor(
+        (Date.now() - zoneConfig.plantingDate.getTime()) / (1000 * 60 * 60 * 24)
+      );
+      daysSincePlanting = Math.max(1, calculated);
+    }
 
     const configForESP32 = {
       zoneId: zoneConfig.zoneId,
@@ -137,11 +185,14 @@ router.get("/zone-config", async (req, res) => {
       },
       irrigationSettings: zoneConfig.irrigationSettings,
       currentStage: targets.stageName || "Unknown",
-      profileDay: Math.max(1, daysSincePlanting),
+      profileDay: daysSincePlanting,
       stageInfo: {
         name: targets.stageName,
         description: targets.stageDescription,
-        dayInStage: targets.dayInStage,
+        dayInStage:
+          targets.dayInStage && !isNaN(targets.dayInStage)
+            ? Math.max(1, targets.dayInStage)
+            : 1,
         source: targets.source,
       },
       cropInfo: cropProfile
@@ -177,45 +228,95 @@ router.get("/zones", async (req, res) => {
     // Get latest readings and enhanced data for each zone
     const zonesWithReadings = await Promise.all(
       zones.map(async (zone) => {
-        const latestReading =
-          await database.SoilMoistureReading.getLatestByZone(zone.zoneId);
-        const stats = await database.SoilMoistureReading.getZoneStats(
-          zone.zoneId,
-          24
-        );
+        try {
+          // FIXED: Use the static methods we defined
+          const latestReading =
+            await database.SoilMoistureReading.getLatestByZone(zone.zoneId);
+          const stats = await database.SoilMoistureReading.getZoneStats(
+            zone.zoneId,
+            24
+          );
 
-        // Get current moisture targets
-        const targets = await zone.getCurrentMoistureTargets();
+          // Get current moisture targets with error handling
+          let targets;
+          try {
+            targets = await zone.getCurrentMoistureTargets();
+          } catch (error) {
+            console.error(
+              `Error getting targets for zone ${zone.zoneId}:`,
+              error
+            );
+            targets = {
+              minMoisture: zone.moistureThresholds.minMoisture,
+              maxMoisture: zone.moistureThresholds.maxMoisture,
+              source: "fallback_error",
+            };
+          }
 
-        // Get crop profile
-        const cropProfile = await database.CropProfile.findOne({
-          cropType: zone.cropType,
-        });
+          // Get crop profile
+          const cropProfile = await database.CropProfile.findOne({
+            cropType: zone.cropType,
+          });
 
-        // Calculate growth stage info
-        const daysSincePlanting = Math.floor(
-          (Date.now() - zone.plantingDate.getTime()) / (1000 * 60 * 60 * 24)
-        );
+          // Calculate growth stage info with validation
+          let daysSincePlanting = 1;
+          let progress = 0;
 
-        return {
-          ...zone.toObject(),
-          latestReading,
-          stats,
-          currentTargets: targets,
-          cropProfile: cropProfile
-            ? {
-                name: cropProfile.name,
-                duration: cropProfile.duration,
-                waterRequirements: cropProfile.waterRequirements,
-              }
-            : null,
-          growthInfo: {
-            daysSincePlanting: Math.max(1, daysSincePlanting),
-            progress: cropProfile
-              ? Math.min(100, (daysSincePlanting / cropProfile.duration) * 100)
-              : 0,
-          },
-        };
+          if (zone.plantingDate && !isNaN(zone.plantingDate.getTime())) {
+            const calculated = Math.floor(
+              (Date.now() - zone.plantingDate.getTime()) / (1000 * 60 * 60 * 24)
+            );
+            daysSincePlanting = Math.max(1, calculated);
+
+            if (cropProfile && cropProfile.duration > 0) {
+              progress = Math.min(
+                100,
+                (daysSincePlanting / cropProfile.duration) * 100
+              );
+            }
+          }
+
+          return {
+            ...zone.toObject(),
+            latestReading,
+            stats,
+            currentTargets: targets,
+            cropProfile: cropProfile
+              ? {
+                  name: cropProfile.name,
+                  duration: cropProfile.duration,
+                  waterRequirements: cropProfile.waterRequirements,
+                }
+              : null,
+            growthInfo: {
+              daysSincePlanting,
+              progress,
+            },
+          };
+        } catch (error) {
+          console.error(`Error processing zone ${zone.zoneId}:`, error);
+          // Return zone with minimal data if processing fails
+          return {
+            ...zone.toObject(),
+            latestReading: null,
+            stats: {
+              readingCount: 0,
+              averageMoisture: 0,
+              minMoisture: 0,
+              maxMoisture: 0,
+            },
+            currentTargets: {
+              minMoisture: zone.moistureThresholds.minMoisture,
+              maxMoisture: zone.moistureThresholds.maxMoisture,
+              source: "fallback_error",
+            },
+            cropProfile: null,
+            growthInfo: {
+              daysSincePlanting: 1,
+              progress: 0,
+            },
+          };
+        }
       })
     );
 
@@ -255,13 +356,29 @@ router.post("/irrigation", async (req, res) => {
     const latestReading = await database.SoilMoistureReading.getLatestByZone(
       zone_id
     );
-    const targets = await zoneConfig.getCurrentMoistureTargets();
+
+    let targets;
+    try {
+      targets = await zoneConfig.getCurrentMoistureTargets();
+    } catch (error) {
+      console.error("Error getting targets for irrigation:", error);
+      targets = {
+        minMoisture: zoneConfig.moistureThresholds.minMoisture,
+        maxMoisture: zoneConfig.moistureThresholds.maxMoisture,
+        source: "fallback_error",
+      };
+    }
+
     const moistureLevel = latestReading ? latestReading.moisturePercentage : 0;
 
-    // Calculate growth stage info
-    const daysSincePlanting = Math.floor(
-      (Date.now() - zoneConfig.plantingDate.getTime()) / (1000 * 60 * 60 * 24)
-    );
+    // Calculate growth stage info with validation
+    let daysSincePlanting = 1;
+    if (zoneConfig.plantingDate && !isNaN(zoneConfig.plantingDate.getTime())) {
+      const calculated = Math.floor(
+        (Date.now() - zoneConfig.plantingDate.getTime()) / (1000 * 60 * 60 * 24)
+      );
+      daysSincePlanting = Math.max(1, calculated);
+    }
 
     // Log the irrigation action with enhanced context
     const irrigationLog = new database.IrrigationLog({
@@ -273,8 +390,11 @@ router.post("/irrigation", async (req, res) => {
       targetMoisture: targets.minMoisture,
       stageInfo: {
         stageName: targets.stageName,
-        dayInStage: targets.dayInStage,
-        dayInCrop: Math.max(1, daysSincePlanting),
+        dayInStage:
+          targets.dayInStage && !isNaN(targets.dayInStage)
+            ? Math.max(1, targets.dayInStage)
+            : 1,
+        dayInCrop: daysSincePlanting,
       },
     });
 
@@ -298,8 +418,11 @@ router.post("/irrigation", async (req, res) => {
         targetMoisture: targets.minMoisture,
         stageInfo: {
           stageName: targets.stageName,
-          dayInStage: targets.dayInStage,
-          dayInCrop: Math.max(1, daysSincePlanting),
+          dayInStage:
+            targets.dayInStage && !isNaN(targets.dayInStage)
+              ? Math.max(1, targets.dayInStage)
+              : 1,
+          dayInCrop: daysSincePlanting,
         },
         timestamp: new Date(),
       },
@@ -422,9 +545,14 @@ router.get("/zone/:zoneId/growth-stage", async (req, res) => {
       });
     }
 
-    const daysSincePlanting = Math.floor(
-      (Date.now() - zoneConfig.plantingDate.getTime()) / (1000 * 60 * 60 * 24)
-    );
+    // Calculate days with validation
+    let daysSincePlanting = 1;
+    if (zoneConfig.plantingDate && !isNaN(zoneConfig.plantingDate.getTime())) {
+      const calculated = Math.floor(
+        (Date.now() - zoneConfig.plantingDate.getTime()) / (1000 * 60 * 60 * 24)
+      );
+      daysSincePlanting = Math.max(1, calculated);
+    }
 
     // Find current stage
     let currentStage = null;
@@ -449,7 +577,7 @@ router.get("/zone/:zoneId/growth-stage", async (req, res) => {
     }
 
     const dayInStage = currentStage
-      ? daysSincePlanting - currentStage.startDay + 1
+      ? Math.max(1, daysSincePlanting - currentStage.startDay + 1)
       : 1;
     const stageDuration = currentStage
       ? currentStage.endDay - currentStage.startDay + 1
@@ -472,7 +600,7 @@ router.get("/zone/:zoneId/growth-stage", async (req, res) => {
           duration: cropProfile.duration,
         },
         growth: {
-          daysSincePlanting: Math.max(1, daysSincePlanting),
+          daysSincePlanting,
           currentStage,
           stageIndex,
           dayInStage,
@@ -496,7 +624,6 @@ router.get("/zone/:zoneId/growth-stage", async (req, res) => {
   }
 });
 
-// Existing routes (latest, zone, irrigation/status) remain the same...
 // GET /api/soil/latest
 router.get("/latest", async (req, res) => {
   try {
@@ -560,13 +687,22 @@ router.post("/zone", async (req, res) => {
       });
     }
 
+    // Validate planting date
+    let validPlantingDate = new Date();
+    if (planting_date) {
+      const parsedDate = new Date(planting_date);
+      if (!isNaN(parsedDate.getTime())) {
+        validPlantingDate = parsedDate;
+      }
+    }
+
     const zoneData = {
       zoneId: zone_id,
       name,
       fieldName: field_name || "Default Field",
       area: area || 100,
       cropType: crop_type,
-      plantingDate: planting_date ? new Date(planting_date) : new Date(),
+      plantingDate: validPlantingDate,
       moistureThresholds: {
         minMoisture: min_moisture || 60,
         maxMoisture: max_moisture || 80,
@@ -618,6 +754,7 @@ router.get("/irrigation/status", async (req, res) => {
     }).sort({
       timestamp: -1,
     });
+
     const latestReading = await database.SoilMoistureReading.getLatestByZone(
       zone_id
     );
@@ -643,7 +780,16 @@ router.get("/irrigation/status", async (req, res) => {
     // Get current moisture targets
     let currentTargets = null;
     if (zoneConfig) {
-      currentTargets = await zoneConfig.getCurrentMoistureTargets();
+      try {
+        currentTargets = await zoneConfig.getCurrentMoistureTargets();
+      } catch (error) {
+        console.error("Error getting targets for status:", error);
+        currentTargets = {
+          minMoisture: zoneConfig.moistureThresholds.minMoisture,
+          maxMoisture: zoneConfig.moistureThresholds.maxMoisture,
+          source: "fallback_error",
+        };
+      }
     }
 
     res.json({

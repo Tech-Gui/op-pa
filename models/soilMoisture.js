@@ -223,10 +223,22 @@ const soilMoistureReadingSchema = new mongoose.Schema(
     },
     // Stage information at time of reading
     stageInfo: {
-      stageName: String,
-      dayInStage: Number,
-      targetMinMoisture: Number,
-      targetMaxMoisture: Number,
+      stageName: {
+        type: String,
+        default: null,
+      },
+      dayInStage: {
+        type: Number,
+        default: null,
+      },
+      targetMinMoisture: {
+        type: Number,
+        default: null,
+      },
+      targetMaxMoisture: {
+        type: Number,
+        default: null,
+      },
     },
     timestamp: {
       type: Date,
@@ -294,6 +306,55 @@ const irrigationLogSchema = new mongoose.Schema(
   }
 );
 
+// ADD MISSING STATIC METHODS FOR SoilMoistureReading
+soilMoistureReadingSchema.statics.getLatestByZone = function (zoneId) {
+  return this.findOne({ zoneId }).sort({ timestamp: -1 }).exec();
+};
+
+soilMoistureReadingSchema.statics.getZoneStats = function (zoneId, hours = 24) {
+  const hoursAgo = new Date(Date.now() - hours * 60 * 60 * 1000);
+
+  return this.aggregate([
+    {
+      $match: {
+        zoneId: zoneId,
+        timestamp: { $gte: hoursAgo },
+      },
+    },
+    {
+      $group: {
+        _id: null,
+        readingCount: { $sum: 1 },
+        averageMoisture: { $avg: "$moisturePercentage" },
+        minMoisture: { $min: "$moisturePercentage" },
+        maxMoisture: { $max: "$moisturePercentage" },
+        latestTimestamp: { $max: "$timestamp" },
+      },
+    },
+    {
+      $project: {
+        _id: 0,
+        readingCount: 1,
+        averageMoisture: { $round: ["$averageMoisture", 1] },
+        minMoisture: { $round: ["$minMoisture", 1] },
+        maxMoisture: { $round: ["$maxMoisture", 1] },
+        latestTimestamp: 1,
+      },
+    },
+  ]).then((results) => {
+    if (results.length === 0) {
+      return {
+        readingCount: 0,
+        averageMoisture: 0,
+        minMoisture: 0,
+        maxMoisture: 0,
+        latestTimestamp: null,
+      };
+    }
+    return results[0];
+  });
+};
+
 // Virtual for calculating current stage from planting date
 zoneConfigSchema.virtual("growthStage").get(function () {
   if (!this.plantingDate || !this.populated("cropProfile")) {
@@ -335,7 +396,7 @@ zoneConfigSchema.virtual("growthStage").get(function () {
   };
 });
 
-// Method to get current moisture targets based on growth stage
+// FIXED METHOD: Method to get current moisture targets based on growth stage
 zoneConfigSchema.methods.getCurrentMoistureTargets = async function () {
   if (this.irrigationSettings.useStaticThresholds) {
     return {
@@ -357,9 +418,33 @@ zoneConfigSchema.methods.getCurrentMoistureTargets = async function () {
     };
   }
 
+  // FIXED: Check if plantingDate is valid
+  if (!this.plantingDate || isNaN(this.plantingDate.getTime())) {
+    console.warn(
+      `Invalid planting date for zone ${this.zoneId}, using fallback thresholds`
+    );
+    return {
+      minMoisture: this.moistureThresholds.minMoisture,
+      maxMoisture: this.moistureThresholds.maxMoisture,
+      source: "fallback_invalid_date",
+    };
+  }
+
   const daysSincePlanting = Math.floor(
     (Date.now() - this.plantingDate.getTime()) / (1000 * 60 * 60 * 24)
   );
+
+  // FIXED: Check if calculation resulted in valid number
+  if (isNaN(daysSincePlanting) || daysSincePlanting < 0) {
+    console.warn(
+      `Invalid days calculation for zone ${this.zoneId}, using fallback thresholds`
+    );
+    return {
+      minMoisture: this.moistureThresholds.minMoisture,
+      maxMoisture: this.moistureThresholds.maxMoisture,
+      source: "fallback_invalid_calculation",
+    };
+  }
 
   // Find current stage
   for (const stage of cropProfile.stages) {
@@ -367,12 +452,13 @@ zoneConfigSchema.methods.getCurrentMoistureTargets = async function () {
       daysSincePlanting >= stage.startDay &&
       daysSincePlanting <= stage.endDay
     ) {
+      const dayInStage = daysSincePlanting - stage.startDay + 1;
       return {
         minMoisture: stage.minMoisture,
         maxMoisture: stage.maxMoisture,
         stageName: stage.name,
         stageDescription: stage.description,
-        dayInStage: daysSincePlanting - stage.startDay + 1,
+        dayInStage: dayInStage,
         source: "crop_profile",
       };
     }
@@ -380,46 +466,63 @@ zoneConfigSchema.methods.getCurrentMoistureTargets = async function () {
 
   // If past all stages, use last stage
   const lastStage = cropProfile.stages[cropProfile.stages.length - 1];
+  const dayInStage = daysSincePlanting - lastStage.startDay + 1;
+
   return {
     minMoisture: lastStage.minMoisture,
     maxMoisture: lastStage.maxMoisture,
     stageName: lastStage.name,
     stageDescription: lastStage.description,
-    dayInStage: daysSincePlanting - lastStage.startDay + 1,
+    dayInStage: Math.max(1, dayInStage), // Ensure at least 1
     source: "crop_profile_final",
   };
 };
 
-// Enhanced irrigation triggering method
+// FIXED: Enhanced irrigation triggering method
 soilMoistureReadingSchema.methods.shouldTriggerIrrigation = async function () {
   const ZoneConfig = mongoose.model("ZoneConfig");
   const zoneConfig = await ZoneConfig.findOne({ zoneId: this.zoneId });
   if (!zoneConfig || !zoneConfig.irrigationSettings.enabled) return false;
 
   // Get current moisture targets (stage-based or static)
-  const targets = await zoneConfig.getCurrentMoistureTargets();
+  try {
+    const targets = await zoneConfig.getCurrentMoistureTargets();
 
-  // Check if moisture is below threshold
-  if (this.moisturePercentage >= targets.minMoisture) return false;
+    // Check if moisture is below threshold
+    if (this.moisturePercentage >= targets.minMoisture) return false;
 
-  // Check cooldown period
-  if (zoneConfig.lastIrrigation) {
-    const cooldownMs =
-      zoneConfig.irrigationSettings.cooldownMinutes * 60 * 1000;
-    const timeSinceLastIrrigation =
-      Date.now() - zoneConfig.lastIrrigation.getTime();
-    if (timeSinceLastIrrigation < cooldownMs) return false;
+    // Check cooldown period
+    if (zoneConfig.lastIrrigation) {
+      const cooldownMs =
+        zoneConfig.irrigationSettings.cooldownMinutes * 60 * 1000;
+      const timeSinceLastIrrigation =
+        Date.now() - zoneConfig.lastIrrigation.getTime();
+      if (timeSinceLastIrrigation < cooldownMs) return false;
+    }
+
+    // FIXED: Store stage info for this reading - validate values first
+    if (targets.stageName && targets.dayInStage && !isNaN(targets.dayInStage)) {
+      this.stageInfo = {
+        stageName: targets.stageName,
+        dayInStage: Math.max(1, targets.dayInStage), // Ensure positive number
+        targetMinMoisture: targets.minMoisture,
+        targetMaxMoisture: targets.maxMoisture,
+      };
+    } else {
+      // Don't set stageInfo if values are invalid
+      this.stageInfo = {
+        stageName: null,
+        dayInStage: null,
+        targetMinMoisture: targets.minMoisture,
+        targetMaxMoisture: targets.maxMoisture,
+      };
+    }
+
+    return true;
+  } catch (error) {
+    console.error("Error in shouldTriggerIrrigation:", error);
+    return false;
   }
-
-  // Store stage info for this reading
-  this.stageInfo = {
-    stageName: targets.stageName,
-    dayInStage: targets.dayInStage,
-    targetMinMoisture: targets.minMoisture,
-    targetMaxMoisture: targets.maxMoisture,
-  };
-
-  return true;
 };
 
 // Add compound indexes
