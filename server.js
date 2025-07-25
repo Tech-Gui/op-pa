@@ -19,7 +19,7 @@ database.init();
 
 // Routes
 app.use("/api/water", waterRoutes);
-app.use("/api/soilmoisture", soilmoistureRoutes);
+app.use("/api/soil", soilmoistureRoutes);
 
 // Health check endpoint
 app.get("/health", (req, res) => {
