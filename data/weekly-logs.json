@@ -1,0 +1,54 @@
+[
+  {
+    "id": "log_1753712636217",
+    "fieldId": 1,
+    "week": 72,
+    "date": "2025-07-28T14:23:48.934Z",
+    "imagePath": "uploads/weekly-logs/weekly-log-1-1753712636217.jpg",
+    "imageUrl": "/uploads/weekly-logs/weekly-log-1-1753712636217.jpg",
+    "notes": "This week I saw things",
+    "analysis": {
+      "plantIdentification": {
+        "name": "tomato",
+        "category": "vegetable",
+        "confidence": 95
+      },
+      "health": "Fair",
+      "confidence": 80,
+      "issues": [
+        "leaf spots",
+        "yellowing leaves"
+      ],
+      "recommendations": [
+        "Apply a fungicide to manage leaf spots",
+        "Ensure proper watering and drainage to prevent further yellowing"
+      ],
+      "diseases": [
+        "early blight"
+      ],
+      "nutrientDeficiencies": [
+        "possible nitrogen deficiency"
+      ],
+      "overallScore": 60,
+      "detailedAssessment": {
+        "leafCondition": "Leaves have dark spots and some yellowing",
+        "colorHealth": "Green with yellowing on affected leaves",
+        "growthPattern": "Normal growth but affected by disease",
+        "pestSigns": "No visible pest damage"
+      }
+    },
+    "plantIdentification": {
+      "name": "tomato",
+      "category": "vegetable",
+      "confidence": 95
+    },
+    "aiComment": {
+      "comment": "It's great to see your keen observation skills at work. Early blight can be challenging, but with timely fungicide application and ensuring proper watering, you can manage it effectively. Keep monitoring the plants closely for any changes.",
+      "trend": "stable",
+      "keyInsight": "Consistent monitoring and timely intervention are crucial in managing early blight and maintaining plant health.",
+      "encouragement": "You're doing a great job staying vigilant. Keep up the good work!"
+    },
+    "createdAt": "2025-07-28T14:23:56.218Z",
+    "updatedAt": "2025-07-28T14:23:56.218Z"
+  }
+]
