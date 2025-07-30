@@ -6,6 +6,11 @@ const {
   CropProfile,
   IrrigationLog,
 } = require("./models/soilMoisture");
+const {
+  EnvironmentalReading,
+  EnvironmentalSensorConfig,
+  EnvironmentalAlert,
+} = require("./models/environmental");
 require("dotenv").config();
 
 // MongoDB connection string - can be set via environment variable
@@ -22,14 +27,11 @@ async function init() {
     console.log("Connected to MongoDB");
     console.log("Database:", mongoose.connection.name);
 
-    // Create default tank configuration if it doesn't exist
+    // Create default configurations
     await createDefaultTank();
-
-    // Create default crop profiles if they don't exist
     await createDefaultCropProfiles();
-
-    // Create sample zones if none exist
     await createSampleZones();
+    await createSampleEnvironmentalSensors(); // Add environmental sensors
   } catch (error) {
     console.error("Error connecting to MongoDB:", error);
     process.exit(1);
@@ -465,6 +467,70 @@ async function createSampleZones() {
   }
 }
 
+// Create sample environmental sensor configurations
+async function createSampleEnvironmentalSensors() {
+  try {
+    const existingSensors = await EnvironmentalSensorConfig.find();
+
+    if (existingSensors.length === 0) {
+      const sampleSensors = [
+        {
+          sensorId: "ENV_001",
+          location: "North Field Weather Station",
+          description:
+            "Primary weather monitoring station for north field crops",
+          isActive: true,
+          calibration: {
+            temperatureOffset: 0,
+            humidityOffset: 0,
+            uvOffset: 0,
+          },
+          alertThresholds: {
+            minTemperature: 5,
+            maxTemperature: 40,
+            minHumidity: 25,
+            maxHumidity: 85,
+            maxUvIndex: 9,
+          },
+          coordinates: {
+            latitude: 40.7128,
+            longitude: -74.006,
+          },
+        },
+        {
+          sensorId: "ENV_002",
+          location: "South Field Weather Station",
+          description:
+            "Secondary weather monitoring for south field operations",
+          isActive: true,
+          calibration: {
+            temperatureOffset: 0,
+            humidityOffset: 0,
+            uvOffset: 0,
+          },
+          alertThresholds: {
+            minTemperature: 8,
+            maxTemperature: 38,
+            minHumidity: 30,
+            maxHumidity: 80,
+            maxUvIndex: 8,
+          },
+        },
+      ];
+
+      for (const sensorData of sampleSensors) {
+        const sensor = new EnvironmentalSensorConfig(sensorData);
+        await sensor.save();
+        console.log(
+          `Sample environmental sensor created: ${sensorData.location}`
+        );
+      }
+    }
+  } catch (error) {
+    console.error("Error creating sample environmental sensors:", error);
+  }
+}
+
 // Water reading functions (existing)
 async function insertWaterReading(data) {
   try {
@@ -560,6 +626,274 @@ async function getAllTanks() {
   }
 }
 
+// Environmental monitoring functions (NEW)
+async function insertEnvironmentalReading(readingData) {
+  try {
+    const reading = new EnvironmentalReading(readingData);
+    const savedReading = await reading.save();
+
+    // Update sensor's last seen timestamp and latest reading
+    await EnvironmentalSensorConfig.updateLastSeen(
+      readingData.sensorId,
+      readingData
+    );
+
+    return {
+      success: true,
+      data: savedReading,
+    };
+  } catch (error) {
+    console.error("Error inserting environmental reading:", error);
+    throw error;
+  }
+}
+
+async function getLatestEnvironmentalReading(sensorId, location) {
+  try {
+    let reading;
+    if (sensorId) {
+      reading = await EnvironmentalReading.getLatestBySensor(sensorId);
+    } else if (location) {
+      reading = await EnvironmentalReading.getLatestByLocation(location);
+    } else {
+      reading = await EnvironmentalReading.findOne().sort({ timestamp: -1 });
+    }
+
+    return reading;
+  } catch (error) {
+    console.error("Error getting latest environmental reading:", error);
+    throw error;
+  }
+}
+
+async function getEnvironmentalReadings(limit = 100, sensorId, location) {
+  try {
+    let query = {};
+    if (sensorId) query.sensorId = sensorId;
+    if (location) query.location = location;
+
+    const readings = await EnvironmentalReading.find(query)
+      .sort({ timestamp: -1 })
+      .limit(limit);
+
+    return readings;
+  } catch (error) {
+    console.error("Error getting environmental readings:", error);
+    throw error;
+  }
+}
+
+async function getEnvironmentalReadingsByDateRange(
+  startDate,
+  endDate,
+  sensorId,
+  location
+) {
+  try {
+    const readings = await EnvironmentalReading.getByDateRange(
+      sensorId,
+      startDate,
+      endDate
+    );
+
+    if (location && !sensorId) {
+      return readings.filter((reading) => reading.location === location);
+    }
+
+    return readings;
+  } catch (error) {
+    console.error("Error getting environmental readings by date range:", error);
+    throw error;
+  }
+}
+
+async function getEnvironmentalStats(hours = 24, sensorId, location) {
+  try {
+    let stats;
+
+    if (sensorId) {
+      const result = await EnvironmentalReading.getSensorStats(sensorId, hours);
+      stats = result[0];
+    } else if (location) {
+      const result = await EnvironmentalReading.getLocationStats(
+        location,
+        hours
+      );
+      stats = result[0];
+    } else {
+      // Get overall stats for all sensors
+      const startTime = new Date(Date.now() - hours * 60 * 60 * 1000);
+      const result = await EnvironmentalReading.aggregate([
+        { $match: { timestamp: { $gte: startTime } } },
+        {
+          $group: {
+            _id: null,
+            avgTemperature: { $avg: "$temperatureCelsius" },
+            minTemperature: { $min: "$temperatureCelsius" },
+            maxTemperature: { $max: "$temperatureCelsius" },
+            avgHumidity: { $avg: "$humidityPercent" },
+            minHumidity: { $min: "$humidityPercent" },
+            maxHumidity: { $max: "$humidityPercent" },
+            avgUvIndex: { $avg: "$uvIndex" },
+            minUvIndex: { $min: "$uvIndex" },
+            maxUvIndex: { $max: "$uvIndex" },
+            readingCount: { $sum: 1 },
+            firstReading: { $min: "$timestamp" },
+            lastReading: { $max: "$timestamp" },
+          },
+        },
+      ]);
+      stats = result[0];
+    }
+
+    return (
+      stats || {
+        avgTemperature: 0,
+        minTemperature: 0,
+        maxTemperature: 0,
+        avgHumidity: 0,
+        minHumidity: 0,
+        maxHumidity: 0,
+        avgUvIndex: 0,
+        minUvIndex: 0,
+        maxUvIndex: 0,
+        readingCount: 0,
+        firstReading: null,
+        lastReading: null,
+      }
+    );
+  } catch (error) {
+    console.error("Error getting environmental stats:", error);
+    throw error;
+  }
+}
+
+async function getEnvironmentalSensorConfig(sensorId) {
+  try {
+    const config = await EnvironmentalSensorConfig.findOne({ sensorId });
+    return config;
+  } catch (error) {
+    console.error("Error getting environmental sensor config:", error);
+    throw error;
+  }
+}
+
+async function updateEnvironmentalSensorConfig(sensorId, updateData) {
+  try {
+    const config = await EnvironmentalSensorConfig.findOneAndUpdate(
+      { sensorId },
+      { ...updateData, updatedAt: new Date() },
+      { new: true, upsert: true }
+    );
+    return config;
+  } catch (error) {
+    console.error("Error updating environmental sensor config:", error);
+    throw error;
+  }
+}
+
+async function getAllActiveEnvironmentalSensors() {
+  try {
+    const sensors = await EnvironmentalSensorConfig.getActiveSensors();
+    return sensors;
+  } catch (error) {
+    console.error("Error getting active environmental sensors:", error);
+    throw error;
+  }
+}
+
+async function getAllEnvironmentalSensorsWithLatestReadings() {
+  try {
+    const sensors = await EnvironmentalSensorConfig.find({
+      isActive: true,
+    }).sort({ lastSeen: -1 });
+
+    // Get latest readings for each sensor
+    const sensorsWithReadings = await Promise.all(
+      sensors.map(async (sensor) => {
+        const latestReading = await EnvironmentalReading.getLatestBySensor(
+          sensor.sensorId
+        );
+
+        return {
+          sensorId: sensor.sensorId,
+          location: sensor.location,
+          lastSeen: sensor.lastSeen,
+          latestTemperature: latestReading?.temperatureCelsius || null,
+          latestHumidity: latestReading?.humidityPercent || null,
+          latestUvIndex: latestReading?.uvIndex || null,
+          latestUvRiskLevel: latestReading?.uvRiskLevel || null,
+          lastReading: latestReading?.timestamp || null,
+          readingCount: await EnvironmentalReading.countDocuments({
+            sensorId: sensor.sensorId,
+          }),
+          isOnline:
+            sensor.lastSeen && Date.now() - sensor.lastSeen.getTime() < 300000, // 5 minutes
+          config: sensor,
+        };
+      })
+    );
+
+    return sensorsWithReadings;
+  } catch (error) {
+    console.error("Error getting environmental sensors with readings:", error);
+    throw error;
+  }
+}
+
+async function getEnvironmentalLocations() {
+  try {
+    const locations = await EnvironmentalReading.distinct("location");
+    return locations;
+  } catch (error) {
+    console.error("Error getting environmental locations:", error);
+    throw error;
+  }
+}
+
+// Environmental alert functions (for future use)
+async function createEnvironmentalAlert(alertData) {
+  try {
+    const alert = new EnvironmentalAlert(alertData);
+    const savedAlert = await alert.save();
+    return savedAlert;
+  } catch (error) {
+    console.error("Error creating environmental alert:", error);
+    throw error;
+  }
+}
+
+async function getActiveEnvironmentalAlerts(sensorId) {
+  try {
+    const query = { isResolved: false };
+    if (sensorId) query.sensorId = sensorId;
+
+    const alerts = await EnvironmentalAlert.find(query).sort({ timestamp: -1 });
+
+    return alerts;
+  } catch (error) {
+    console.error("Error getting active environmental alerts:", error);
+    throw error;
+  }
+}
+
+async function resolveEnvironmentalAlert(alertId) {
+  try {
+    const alert = await EnvironmentalAlert.findByIdAndUpdate(
+      alertId,
+      {
+        isResolved: true,
+        resolvedAt: new Date(),
+      },
+      { new: true }
+    );
+    return alert;
+  } catch (error) {
+    console.error("Error resolving environmental alert:", error);
+    throw error;
+  }
+}
+
 // Graceful shutdown
 async function close() {
   try {
@@ -598,6 +932,9 @@ mongoose.connection.on("disconnected", () => {
 
 module.exports = {
   init,
+  close,
+
+  // Water management functions
   insertWaterReading,
   getAllWaterReadings,
   getLatestWaterReading,
@@ -606,13 +943,36 @@ module.exports = {
   getReadingsByDateRange,
   getTankStats,
   getAllTanks,
-  close,
+
+  // Environmental monitoring functions
+  insertEnvironmentalReading,
+  getLatestEnvironmentalReading,
+  getEnvironmentalReadings,
+  getEnvironmentalReadingsByDateRange,
+  getEnvironmentalStats,
+  getEnvironmentalSensorConfig,
+  updateEnvironmentalSensorConfig,
+  getAllActiveEnvironmentalSensors,
+  getAllEnvironmentalSensorsWithLatestReadings,
+  getEnvironmentalLocations,
+
+  // Environmental alert functions
+  createEnvironmentalAlert,
+  getActiveEnvironmentalAlerts,
+  resolveEnvironmentalAlert,
+
   // Export water models
   WaterReading,
   TankConfig,
+
   // Export soil moisture models
   SoilMoistureReading,
   ZoneConfig,
   CropProfile,
   IrrigationLog,
+
+  // Export environmental models
+  EnvironmentalReading,
+  EnvironmentalSensorConfig,
+  EnvironmentalAlert,
 };
