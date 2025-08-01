@@ -131,16 +131,17 @@ router.post("/pump-control", async (req, res) => {
       );
     }
 
-    // Log the pump action
-    const pumpLog = new database.PumpLog({
+    // Log the pump action using database.PumpLog
+    const pumpLogData = {
       tankId: tank_id,
+      sensorId: tankConfig.sensorId,
       action,
       trigger: force_manual ? "manual_override" : "manual",
       waterLevelCm: waterLevel,
       distanceCm: latestReading ? latestReading.distanceCm : null,
-      sensorId: tankConfig.sensorId,
-    });
+    };
 
+    const pumpLog = new database.PumpLog(pumpLogData);
     await pumpLog.save();
 
     res.json({
@@ -243,15 +244,16 @@ router.post("/pump-control/bulk", async (req, res) => {
 
         pendingPumpCommands.set(tankConfig.sensorId, command);
 
-        // Log the action
-        const pumpLog = new database.PumpLog({
+        // Log the action using database.PumpLog
+        const pumpLogData = {
           tankId: tankId,
+          sensorId: tankConfig.sensorId,
           action,
           trigger: "bulk_operation",
           waterLevelCm: 0, // Will be updated by ESP32
-          sensorId: tankConfig.sensorId,
-        });
+        };
 
+        const pumpLog = new database.PumpLog(pumpLogData);
         await pumpLog.save();
 
         results.push({
@@ -295,7 +297,7 @@ router.get("/pump-status", async (req, res) => {
       });
     }
 
-    // Get latest pump log
+    // Get latest pump log using database.PumpLog
     const latestLog = await database.PumpLog.findOne({
       tankId: tank_id,
     }).sort({
@@ -357,13 +359,13 @@ router.get("/system/status", async (req, res) => {
       sensorId: { $ne: null, $ne: "" },
     });
 
-    // Get recent pump activities
+    // Get recent pump activities using database.PumpLog
     const recentPumpActions = await database.PumpLog.find({})
       .sort({ timestamp: -1 })
       .limit(10)
       .select("tankId action trigger timestamp waterLevelCm");
 
-    // Count active pumps (start without corresponding stop)
+    // Count active pumps (start without corresponding stop) using database.PumpLog
     const startLogs = await database.PumpLog.aggregate([
       { $match: { action: "start" } },
       { $sort: { tankId: 1, timestamp: -1 } },
@@ -467,43 +469,6 @@ router.get("/commands/queue", async (req, res) => {
     console.error("Error getting pump command queue:", error);
     res.status(500).json({
       error: "Failed to retrieve command queue",
-      message: error.message,
-    });
-  }
-});
-
-// DELETE /api/water/commands/clear - Clear pump command queue
-router.delete("/commands/clear", async (req, res) => {
-  try {
-    const { sensor_id } = req.query;
-
-    if (sensor_id) {
-      // Clear specific sensor command
-      const hadCommand = pendingPumpCommands.has(sensor_id);
-      pendingPumpCommands.delete(sensor_id);
-
-      res.json({
-        success: true,
-        message: hadCommand
-          ? `Pump command cleared for sensor ${sensor_id}`
-          : `No pump command found for sensor ${sensor_id}`,
-        cleared: hadCommand ? 1 : 0,
-      });
-    } else {
-      // Clear all commands
-      const clearedCount = pendingPumpCommands.size;
-      pendingPumpCommands.clear();
-
-      res.json({
-        success: true,
-        message: `All pump commands cleared from queue`,
-        cleared: clearedCount,
-      });
-    }
-  } catch (error) {
-    console.error("Error clearing pump commands:", error);
-    res.status(500).json({
-      error: "Failed to clear commands",
       message: error.message,
     });
   }
@@ -895,35 +860,38 @@ router.get("/stats", async (req, res) => {
   }
 });
 
-// POST /api/water/relay - Control relay (placeholder for future use)
-router.post("/relay", async (req, res) => {
+// DELETE /api/water/commands/clear - Clear pump command queue
+router.delete("/commands/clear", async (req, res) => {
   try {
-    const { action, tank_id } = req.body;
+    const { sensor_id } = req.query;
 
-    if (!action || !["on", "off"].includes(action.toLowerCase())) {
-      return res.status(400).json({
-        error: 'Invalid action. Use "on" or "off"',
+    if (sensor_id) {
+      // Clear specific sensor command
+      const hadCommand = pendingPumpCommands.has(sensor_id);
+      pendingPumpCommands.delete(sensor_id);
+
+      res.json({
+        success: true,
+        message: hadCommand
+          ? `Pump command cleared for sensor ${sensor_id}`
+          : `No pump command found for sensor ${sensor_id}`,
+        cleared: hadCommand ? 1 : 0,
+      });
+    } else {
+      // Clear all commands
+      const clearedCount = pendingPumpCommands.size;
+      pendingPumpCommands.clear();
+
+      res.json({
+        success: true,
+        message: `All pump commands cleared from queue`,
+        cleared: clearedCount,
       });
     }
-
-    // For now, just log the request
-    // In the future, this could send MQTT messages or HTTP requests to ESP32
-    console.log(
-      `Relay control request: ${action} for tank ${tank_id || "main_tank"}`
-    );
-
-    res.json({
-      success: true,
-      message: `Relay ${action} command logged`,
-      tankId: tank_id || "main_tank",
-      action: action.toLowerCase(),
-      timestamp: new Date().toISOString(),
-      note: "This is a placeholder endpoint. Relay control not yet implemented.",
-    });
   } catch (error) {
-    console.error("Error processing relay command:", error);
+    console.error("Error clearing pump commands:", error);
     res.status(500).json({
-      error: "Failed to process relay command",
+      error: "Failed to clear commands",
       message: error.message,
     });
   }
