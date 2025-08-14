@@ -9,6 +9,7 @@ const soilmoistureRoutes = require("./routes/soilMoisture");
 const aiRoutes = require("./routes/ai");
 const videoAnalysisRoutes = require("./routes/video-analysis"); // Add video analysis routes
 const environmentalRoutes = require("./routes/environmental");
+const sensorsRoutes = require("./routes/sensors");
 
 require("dotenv").config();
 
@@ -61,6 +62,7 @@ app.use("/api/soil", soilmoistureRoutes);
 app.use("/api/ai", aiRoutes);
 app.use("/api/video", videoAnalysisRoutes); // Add video analysis routes
 app.use("/api/environmental", environmentalRoutes);
+app.use("/api/sensors", sensorsRoutes);
 
 // Health check endpoint
 app.get("/health", (req, res) => {
