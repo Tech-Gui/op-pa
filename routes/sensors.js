@@ -2,10 +2,6 @@ const express = require("express");
 const router = express.Router();
 const database = require("../database");
 
-// Import the existing route modules to access their pending command maps
-// const waterRoutes = require("../models/water");
-// const soilRoutes = require("../models/soilMoisture");
-
 // Access to pending command maps (you may need to export these from the route files)
 // For now, we'll create our own unified pending commands map
 const pendingUnifiedCommands = new Map();
@@ -154,13 +150,13 @@ router.post("/reading", async (req, res) => {
         const envData = {
           sensorId: sensor_id,
           location: location || "field_station_1",
-          temperature: sensors.environmental.temperature?.valid
+          temperatureCelsius: sensors.environmental.temperature?.valid // <--- Corrected name
             ? sensors.environmental.temperature.value
             : null,
-          humidity: sensors.environmental.humidity?.valid
+          humidityPercent: sensors.environmental.humidity?.valid // <--- Corrected name
             ? sensors.environmental.humidity.value
             : null,
-          timestamp: new Date(), // Backend generates its own timestamp
+          timestamp: new Date(),
         };
 
         // Save environmental data (you may need to create this schema)
