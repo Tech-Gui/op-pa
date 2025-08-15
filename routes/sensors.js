@@ -13,7 +13,8 @@ const pendingUnifiedCommands = new Map();
 // POST /api/sensors/reading - Unified endpoint for nRF9160 multi-sensor gateway
 router.post("/reading", async (req, res) => {
   try {
-    const { sensor_id, sensors, relays, location, timestamp } = req.body;
+    // MODIFICATION: Removed 'timestamp' from the destructuring
+    const { sensor_id, sensors, relays, location } = req.body;
 
     if (!sensor_id || !sensors) {
       return res.status(400).json({
@@ -159,7 +160,7 @@ router.post("/reading", async (req, res) => {
           humidity: sensors.environmental.humidity?.valid
             ? sensors.environmental.humidity.value
             : null,
-          timestamp: new Date(),
+          timestamp: new Date(), // Backend generates its own timestamp
         };
 
         // Save environmental data (you may need to create this schema)
@@ -189,7 +190,7 @@ router.post("/reading", async (req, res) => {
       responses: responses,
       errors: errors.length > 0 ? errors : undefined,
       message: "Multi-sensor reading processed",
-      timestamp: new Date(),
+      timestamp: new Date(), // Backend generates its own timestamp for the response
     };
 
     // Add manual command if exists
