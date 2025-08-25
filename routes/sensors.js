@@ -2,6 +2,14 @@ const express = require("express");
 const router = express.Router();
 const database = require("../database");
 
+// Simple structured logger (no external deps)
+const log = {
+  info: (...args) => console.log(new Date().toISOString(), "[INFO]", ...args),
+  warn: (...args) => console.warn(new Date().toISOString(), "[WARN]", ...args),
+  error: (...args) =>
+    console.error(new Date().toISOString(), "[ERROR]", ...args),
+};
+
 // Access to pending command maps (you may need to export these from the route files)
 // For now, we'll create our own unified pending commands map
 const pendingUnifiedCommands = new Map();
@@ -12,7 +20,19 @@ router.post("/reading", async (req, res) => {
     // MODIFICATION: Removed 'timestamp' from the destructuring
     const { sensor_id, sensors, relays, location } = req.body;
 
+    log.info("POST /api/sensors/reading received", {
+      sensor_id,
+      hasSensors: !!sensors,
+      sensorKeys: sensors ? Object.keys(sensors) : [],
+      relayKeys: relays ? Object.keys(relays) : [],
+      location: location || null,
+    });
+
     if (!sensor_id || !sensors) {
+      log.warn("POST /api/sensors/reading validation failed: missing fields", {
+        has_sensor_id: !!sensor_id,
+        has_sensors: !!sensors,
+      });
       return res.status(400).json({
         error: "Missing required fields: sensor_id and sensors",
       });
@@ -41,7 +61,7 @@ router.post("/reading", async (req, res) => {
           const waterData = {
             distance_cm: distance_cm,
             tank_id: tankConfig.tankId,
-            relay_status: relays.water_pump || "unknown",
+            relay_status: relays?.water_pump || "unknown",
             sensor_id: sensor_id,
           };
 
@@ -51,7 +71,7 @@ router.post("/reading", async (req, res) => {
             sensorId: sensor_id,
             distanceCm: distance_cm,
             waterLevelCm: sensors.water_level.value,
-            relayStatus: relays.water_pump || "unknown",
+            relayStatus: relays?.water_pump || "unknown",
           });
 
           responses.water = {
@@ -59,14 +79,27 @@ router.post("/reading", async (req, res) => {
             data: result.data,
             tankId: tankConfig.tankId,
           };
+
+          log.info("Water level processed", {
+            sensor_id,
+            tankId: tankConfig.tankId,
+            distance_cm,
+            waterLevelCm: sensors.water_level.value,
+          });
         } else {
           responses.water = {
             success: false,
             error: "No tank configuration found for sensor",
           };
+          log.warn("No tank configuration found for sensor", { sensor_id });
         }
       } catch (error) {
         errors.push({ type: "water", error: error.message });
+        log.error("Error processing water level", {
+          sensor_id,
+          message: error.message,
+          stack: error.stack,
+        });
       }
     }
 
@@ -88,6 +121,11 @@ router.post("/reading", async (req, res) => {
               maxMoisture: zoneConfig.moistureThresholds.maxMoisture,
               source: "fallback_error",
             };
+            log.warn("Falling back to static moisture thresholds", {
+              sensor_id,
+              zoneId: zoneConfig.zoneId,
+              message: error.message,
+            });
           }
 
           const readingData = {
@@ -98,7 +136,7 @@ router.post("/reading", async (req, res) => {
             temperature: sensors.environmental?.temperature?.valid
               ? sensors.environmental.temperature.value
               : null,
-            relayStatus: relays.irrigation || "auto",
+            relayStatus: relays?.irrigation || "auto",
             stageInfo: {
               stageName: targets.stageName,
               dayInStage: targets.dayInStage,
@@ -116,6 +154,14 @@ router.post("/reading", async (req, res) => {
             reading.irrigationTriggered = shouldIrrigate;
           } catch (error) {
             reading.irrigationTriggered = false;
+            log.warn(
+              "Error determining irrigation trigger; defaulting to false",
+              {
+                sensor_id,
+                zoneId: zoneConfig.zoneId,
+                message: error.message,
+              }
+            );
           }
 
           const savedReading = await reading.save();
@@ -133,14 +179,27 @@ router.post("/reading", async (req, res) => {
             irrigationTriggered: shouldIrrigate,
             zoneId: zoneConfig.zoneId,
           };
+
+          log.info("Soil moisture processed", {
+            sensor_id,
+            zoneId: zoneConfig.zoneId,
+            irrigationTriggered: shouldIrrigate,
+            moisture: sensors.soil_moisture.value,
+          });
         } else {
           responses.soil = {
             success: false,
             error: "No zone configuration found for sensor",
           };
+          log.warn("No zone configuration found for sensor", { sensor_id });
         }
       } catch (error) {
         errors.push({ type: "soil", error: error.message });
+        log.error("Error processing soil moisture", {
+          sensor_id,
+          message: error.message,
+          stack: error.stack,
+        });
       }
     }
 
@@ -167,16 +226,33 @@ router.post("/reading", async (req, res) => {
           success: true,
           data: envReading,
         };
+
+        log.info("Environmental data processed", {
+          sensor_id,
+          temperatureCelsius: envData.temperatureCelsius,
+          humidityPercent: envData.humidityPercent,
+          location: envData.location,
+        });
       } catch (error) {
         errors.push({ type: "environmental", error: error.message });
+        log.error("Error processing environmental data", {
+          sensor_id,
+          message: error.message,
+          stack: error.stack,
+        });
       }
     }
 
     // Check for pending commands
     if (pendingUnifiedCommands.has(sensor_id)) {
-      manualCommand = pendingUnifiedCommands.get(sensor_id);
+      const cmd = pendingUnifiedCommands.get(sensor_id);
+      manualCommand = cmd;
       pendingUnifiedCommands.delete(sensor_id);
       hasCommands = true;
+      log.info("Manual command dequeued during /reading", {
+        sensor_id,
+        command: cmd,
+      });
     }
 
     // Prepare response
@@ -194,8 +270,19 @@ router.post("/reading", async (req, res) => {
       response.manualCommand = manualCommand;
     }
 
+    log.info("POST /api/sensors/reading success", {
+      sensor_id,
+      hasErrors: errors.length > 0,
+      errorCount: errors.length,
+      hasCommands,
+    });
+
     res.status(201).json(response);
   } catch (error) {
+    log.error("Error processing unified sensor reading", {
+      message: error.message,
+      stack: error.stack,
+    });
     console.error("Error processing unified sensor reading:", error);
     res.status(500).json({
       error: "Failed to process sensor reading",
@@ -239,19 +326,33 @@ router.post("/command", async (req, res) => {
   try {
     const { sensor_id, action, target, trigger = "manual" } = req.body;
 
+    log.info("POST /api/sensors/command received", {
+      sensor_id,
+      action,
+      target,
+      trigger,
+    });
+
     if (!sensor_id || !action || !target) {
+      log.warn("POST /api/sensors/command validation failed: missing fields", {
+        has_sensor_id: !!sensor_id,
+        has_action: !!action,
+        has_target: !!target,
+      });
       return res.status(400).json({
         error: "Missing required fields: sensor_id, action, target",
       });
     }
 
     if (!["start", "stop"].includes(action)) {
+      log.warn("POST /api/sensors/command invalid action", { action });
       return res.status(400).json({
         error: "Invalid action. Must be 'start' or 'stop'",
       });
     }
 
     if (!["water_pump", "irrigation"].includes(target)) {
+      log.warn("POST /api/sensors/command invalid target", { target });
       return res.status(400).json({
         error: "Invalid target. Must be 'water_pump' or 'irrigation'",
       });
@@ -270,8 +371,9 @@ router.post("/command", async (req, res) => {
     console.log(
       `Queued ${action} command for ${target} on sensor ${sensor_id}`
     );
+    log.info("Queued command", { sensor_id, command });
 
-    res.json({
+    const payload = {
       success: true,
       data: {
         sensorId: sensor_id,
@@ -282,8 +384,21 @@ router.post("/command", async (req, res) => {
         timestamp: new Date(),
       },
       message: `Command queued for nRF9160 sensor ${sensor_id}`,
+    };
+
+    log.info("POST /api/sensors/command success", {
+      sensor_id,
+      action,
+      target,
+      trigger,
     });
+
+    res.json(payload);
   } catch (error) {
+    log.error("Error queuing unified command", {
+      message: error.message,
+      stack: error.stack,
+    });
     console.error("Error queuing unified command:", error);
     res.status(500).json({
       error: "Failed to queue command",
