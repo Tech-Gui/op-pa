@@ -343,6 +343,188 @@ router.get("/status/:sensorId", async (req, res) => {
     });
   }
 });
+// GET /api/sensors/history/:sensorId
+// ?param=temperature|humidity|soil|water_level|water_distance|all
+// &from&to&agg=raw|min|max|avg&interval=15m|1h|2d|1w
+router.get("/history/:sensorId", async (req, res) => {
+  const { sensorId } = req.params;
+
+  // normalize + defaults
+  const { param = "all", from, to, agg = "raw", interval = "1h" } = req.query;
+
+  // ---- helpers ----
+  const parseInterval = (s) => {
+    const m = String(s || "1h")
+      .trim()
+      .match(/^(\d+)\s*([smhdw])$/i);
+    const units = { s: "second", m: "minute", h: "hour", d: "day", w: "week" };
+    if (!m) return { unit: "hour", binSize: 1 };
+    return { unit: units[m[2].toLowerCase()], binSize: parseInt(m[1], 10) };
+  };
+
+  const { unit, binSize } = parseInterval(interval);
+
+  const start = from
+    ? new Date(from)
+    : new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const end = to ? new Date(to) : new Date();
+
+  if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+    return res.status(400).json({
+      success: false,
+      error: "Invalid 'from' or 'to' date. Use ISO timestamps.",
+    });
+  }
+  if (start > end) {
+    return res.status(400).json({
+      success: false,
+      error: "'from' must be <= 'to'",
+    });
+  }
+
+  const aggNorm = String(agg).toLowerCase();
+  const allowedAgg = new Set(["raw", "min", "max", "avg"]);
+  if (!allowedAgg.has(aggNorm)) {
+    return res.status(400).json({
+      success: false,
+      error: "Invalid 'agg'. Use raw, min, max, or avg",
+    });
+  }
+
+  // param aliases
+  const paramNorm = String(param).toLowerCase();
+  const ALIASES = {
+    temp: "temperature",
+    temps: "temperature",
+    humidity: "humidity",
+    humid: "humidity",
+    soil: "soil",
+    soil_moisture: "soil",
+    moisture: "soil",
+    water: "water_level",
+    level: "water_level",
+    waterlevel: "water_level",
+    distance: "water_distance",
+    waterdistance: "water_distance",
+    all: "all",
+    temperature: "temperature",
+    water_level: "water_level",
+    water_distance: "water_distance",
+  };
+  const resolved = ALIASES[paramNorm] || paramNorm;
+
+  // where we pull each series from + which field to aggregate
+  const SERIES = {
+    temperature: {
+      collection: () => database.EnvironmentalReading,
+      field: "temperatureCelsius",
+    },
+    humidity: {
+      collection: () => database.EnvironmentalReading,
+      field: "humidityPercent",
+    },
+    soil: {
+      collection: () => database.SoilMoistureReading,
+      field: "moisturePercentage",
+    },
+    water_level: {
+      collection: () => database.WaterReading,
+      field: "waterLevelCm",
+    },
+    water_distance: {
+      collection: () => database.WaterReading,
+      field: "distanceCm",
+    },
+  };
+
+  // shared time / sensor match (supports either 'timestamp' or 'createdAt')
+  const baseMatch = {
+    sensorId,
+    $or: [
+      { timestamp: { $gte: start, $lte: end } },
+      { createdAt: { $gte: start, $lte: end } },
+    ],
+  };
+
+  // build a pipeline for a given numeric field
+  const buildAgg = (field) => {
+    if (aggNorm === "raw") {
+      return [
+        { $match: baseMatch },
+        { $addFields: { ts: { $ifNull: ["$timestamp", "$createdAt"] } } },
+        { $sort: { ts: 1 } },
+        { $project: { _id: 0, ts: 1, value: `$${field}` } },
+      ];
+    }
+    return [
+      { $match: baseMatch },
+      { $addFields: { ts: { $ifNull: ["$timestamp", "$createdAt"] } } },
+      {
+        $group: {
+          _id: { $dateTrunc: { date: "$ts", unit, binSize } },
+          avg: { $avg: `$${field}` },
+          min: { $min: `$${field}` },
+          max: { $max: `$${field}` },
+        },
+      },
+      { $sort: { _id: 1 } },
+      {
+        $project: {
+          _id: 0,
+          ts: "$_id",
+          value:
+            aggNorm === "avg" ? "$avg" : aggNorm === "min" ? "$min" : "$max",
+        },
+      },
+    ];
+  };
+
+  const fetchSeries = async (key) => {
+    const spec = SERIES[key];
+    if (!spec) {
+      throw new Error(`Unknown series: ${key}`);
+    }
+    const Model = spec.collection();
+    return Model.aggregate(buildAgg(spec.field));
+  };
+
+  try {
+    let result;
+
+    if (resolved === "all") {
+      const keys = Object.keys(SERIES); // temp, humidity, soil, water_level, water_distance
+      const data = await Promise.all(keys.map((k) => fetchSeries(k)));
+      result = keys.reduce((acc, k, idx) => {
+        acc[k] = data[idx];
+        return acc;
+      }, {});
+    } else if (SERIES[resolved]) {
+      result = await fetchSeries(resolved);
+    } else {
+      return res.status(400).json({
+        success: false,
+        error:
+          "Invalid 'param'. Use temperature, humidity, soil, water_level, water_distance, or all",
+      });
+    }
+
+    res.json({
+      success: true,
+      query: {
+        sensorId,
+        param: resolved,
+        from: start.toISOString(),
+        to: end.toISOString(),
+        agg: aggNorm,
+        interval: `${binSize}${unit[0]}`, // echo "1h" style
+      },
+      readings: result,
+    });
+  } catch (err) {
+    console.error("Error fetching history:", err);
+    res.status(500).json({ success: false, error: "Failed to fetch history" });
+  }
+});
 
 // GET /api/sensors/health - Health check for sensors system
 router.get("/health", async (req, res) => {

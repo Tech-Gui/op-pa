@@ -40,10 +40,18 @@ ensureDirectoriesExist();
 // Middleware
 app.use(
   cors({
-    // origin: process.env.FRONTEND_URL || "http://localhost:5173",
-    origin: process.env.FRONTEND_URL || "https://opptapp.onrender.com",
-
+    origin: [
+      "http://localhost:3000", // Create React App
+      "http://localhost:5173", // Vite
+      "http://localhost:5174", // Vite
+      "http://127.0.0.1:5173", // Alternative localhost
+      "https://opptapp.onrender.com",
+      "https://dataportal-2l83.onrender.com",
+      process.env.FRONTEND_URL || "http://localhost:5173",
+    ],
     credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
   })
 );
 
