@@ -2,6 +2,9 @@ const express = require("express");
 const router = express.Router();
 const database = require("../database");
 
+// ---- Single-zone setup ----
+const HARD_ZONE_ID = "zone_001"; // fixed zone id
+
 // Simple structured logger (no external deps)
 const log = {
   info: (...args) => console.log(new Date().toISOString(), "[INFO]", ...args),
@@ -103,22 +106,23 @@ router.post("/reading", async (req, res) => {
       }
     }
 
-    // Process Soil Moisture Data
+    // Process Soil Moisture Data (single-zone hard link)
     if (sensors.soil_moisture && sensors.soil_moisture.valid) {
       try {
+        // Always fetch the zone config by the hardcoded zone id
         const zoneConfig = await database.ZoneConfig.findOne({
-          sensorId: sensor_id,
+          zoneId: HARD_ZONE_ID,
         });
 
         if (zoneConfig) {
-          // Get current moisture targets
+          // Get current moisture targets (fallback safe)
           let targets;
           try {
             targets = await zoneConfig.getCurrentMoistureTargets();
           } catch (error) {
             targets = {
-              minMoisture: zoneConfig.moistureThresholds.minMoisture,
-              maxMoisture: zoneConfig.moistureThresholds.maxMoisture,
+              minMoisture: zoneConfig.moistureThresholds?.minMoisture,
+              maxMoisture: zoneConfig.moistureThresholds?.maxMoisture,
               source: "fallback_error",
             };
             log.warn("Falling back to static moisture thresholds", {
@@ -129,8 +133,8 @@ router.post("/reading", async (req, res) => {
           }
 
           const readingData = {
-            zoneId: zoneConfig.zoneId,
-            sensorId: sensor_id,
+            zoneId: zoneConfig.zoneId, // <-- hard link to zone_001
+            sensorId: sensor_id, // still record which device sent it
             moisturePercentage: sensors.soil_moisture.value,
             rawValue: 0, // Not provided by nRF9160
             temperature: sensors.environmental?.temperature?.valid
@@ -138,10 +142,10 @@ router.post("/reading", async (req, res) => {
               : null,
             relayStatus: relays?.irrigation || "auto",
             stageInfo: {
-              stageName: targets.stageName,
-              dayInStage: targets.dayInStage,
-              targetMinMoisture: targets.minMoisture,
-              targetMaxMoisture: targets.maxMoisture,
+              stageName: targets?.stageName,
+              dayInStage: targets?.dayInStage,
+              targetMinMoisture: targets?.minMoisture,
+              targetMaxMoisture: targets?.maxMoisture,
             },
           };
 
@@ -180,7 +184,7 @@ router.post("/reading", async (req, res) => {
             zoneId: zoneConfig.zoneId,
           };
 
-          log.info("Soil moisture processed", {
+          log.info("Soil moisture processed (single-zone)", {
             sensor_id,
             zoneId: zoneConfig.zoneId,
             irrigationTriggered: shouldIrrigate,
@@ -189,9 +193,12 @@ router.post("/reading", async (req, res) => {
         } else {
           responses.soil = {
             success: false,
-            error: "No zone configuration found for sensor",
+            error: `No zone configuration found for zoneId=${HARD_ZONE_ID}`,
           };
-          log.warn("No zone configuration found for sensor", { sensor_id });
+          log.warn("No zone configuration found for hardcoded zone", {
+            sensor_id,
+            zoneId: HARD_ZONE_ID,
+          });
         }
       } catch (error) {
         errors.push({ type: "soil", error: error.message });
@@ -246,8 +253,8 @@ router.post("/reading", async (req, res) => {
     // Check for pending commands
     if (pendingUnifiedCommands.has(sensor_id)) {
       const cmd = pendingUnifiedCommands.get(sensor_id);
-      manualCommand = cmd;
       pendingUnifiedCommands.delete(sensor_id);
+      manualCommand = cmd;
       hasCommands = true;
       log.info("Manual command dequeued during /reading", {
         sensor_id,
@@ -414,7 +421,11 @@ router.get("/status/:sensorId", async (req, res) => {
 
     // Get latest readings from all sensor types
     const tankConfig = await database.TankConfig.findOne({ sensorId });
-    const zoneConfig = await database.ZoneConfig.findOne({ sensorId });
+
+    // For soil: always use hardcoded zone id
+    const zoneConfig = await database.ZoneConfig.findOne({
+      zoneId: HARD_ZONE_ID,
+    });
 
     let waterStatus = null;
     let soilStatus = null;
@@ -458,6 +469,7 @@ router.get("/status/:sensorId", async (req, res) => {
     });
   }
 });
+
 // GET /api/sensors/history/:sensorId
 // ?param=temperature|humidity|soil|water_level|water_distance|all
 // &from&to&agg=raw|min|max|avg&interval=15m|1h|2d|1w
