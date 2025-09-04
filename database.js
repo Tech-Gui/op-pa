@@ -1,6 +1,6 @@
 const mongoose = require("mongoose");
 // database.js
-module.exports.PendingCommand = require("./models/PendingCommand");
+const PendingCommand = require("./models/PendingCommand");
 
 require("dotenv").config();
 
@@ -1383,4 +1383,5 @@ module.exports = {
   EnvironmentalReading,
   EnvironmentalSensorConfig,
   EnvironmentalAlert,
+  PendingCommand,
 };
