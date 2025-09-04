@@ -1,9 +1,11 @@
 const mongoose = require("mongoose");
+// database.js
+module.exports.PendingCommand = require("./models/PendingCommand");
+
 require("dotenv").config();
 
 // MongoDB connection string - can be set via environment variable
-const MONGODB_URI =
-  process.env.MONGODB_URI || "mongodb://localhost:27017/smart_farming";
+const MONGODB_URI = process.env.MONGODB_URI;
 
 // ==============================
 // WATER SYSTEM MODELS
