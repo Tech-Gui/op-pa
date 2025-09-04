@@ -1,3 +1,4 @@
+// routes/sensors.js
 const express = require("express");
 const router = express.Router();
 const database = require("../database");
@@ -13,14 +14,21 @@ const log = {
     console.error(new Date().toISOString(), "[ERROR]", ...args),
 };
 
-// Access to pending command maps (you may need to export these from the route files)
-// For now, we'll create our own unified pending commands map
+// Access to pending command maps
 const pendingUnifiedCommands = new Map();
+
+// ---------- helpers (new) ----------
+const coerceNumber = (v) => (typeof v === "number" ? v : Number(v));
+const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+const safeTankHeight = (cfg) => {
+  const h = coerceNumber(cfg?.tankHeightCm);
+  return Number.isFinite(h) && h > 0 ? h : 0;
+};
 
 // POST /api/sensors/reading - Unified endpoint for nRF9160 multi-sensor gateway
 router.post("/reading", async (req, res) => {
   try {
-    // MODIFICATION: Removed 'timestamp' from the destructuring
+    // NOTE: device doesn't send timestamp; backend generates its own
     const { sensor_id, sensors, relays, location } = req.body;
 
     log.info("POST /api/sensors/reading received", {
@@ -46,35 +54,53 @@ router.post("/reading", async (req, res) => {
     let hasCommands = false;
     let manualCommand = null;
 
-    // Process Water Level Data
-    if (sensors.water_level && sensors.water_level.valid) {
+    // ===== Water: treat incoming water_level.value as DISTANCE (firmware sends distance) =====
+    // Still support future 'water_distance' field if added, and fallback properly.
+    if (
+      (sensors.water_level && sensors.water_level.valid) ||
+      (sensors.water_distance && sensors.water_distance.valid)
+    ) {
       try {
-        // Convert water level (cm) to distance for the water API
-        // Assuming we need to find tank config first
         const tankConfig = await database.TankConfig.findOne({
           sensorId: sensor_id,
         });
 
-        if (tankConfig) {
-          const distance_cm = Math.max(
-            0,
-            tankConfig.tankHeightCm - sensors.water_level.value
+        if (!tankConfig) {
+          responses.water = {
+            success: false,
+            error: "No tank configuration found for sensor",
+          };
+          log.warn("No tank configuration found for sensor", { sensor_id });
+        } else {
+          const tankHeight = safeTankHeight(tankConfig);
+
+          // prefer explicit water_distance if present; otherwise treat water_level as distance
+          const hasDistance =
+            sensors.water_distance && sensors.water_distance.valid;
+          const raw = coerceNumber(
+            hasDistance
+              ? sensors.water_distance.value
+              : sensors.water_level.value
           );
 
-          const waterData = {
-            distance_cm: distance_cm,
-            tank_id: tankConfig.tankId,
-            relay_status: relays?.water_pump || "unknown",
-            sensor_id: sensor_id,
-          };
+          // distance from sensor to water surface (cm)
+          const distanceCm = clamp(
+            raw,
+            0,
+            tankHeight || Number.MAX_SAFE_INTEGER
+          );
 
-          // Call water reading endpoint logic internally
+          // derived water column height (cm)
+          const waterLevelCm =
+            tankHeight > 0 ? clamp(tankHeight - distanceCm, 0, tankHeight) : 0;
+
           const result = await database.insertWaterReading({
             tankId: tankConfig.tankId,
-            sensorId: sensor_id,
-            distanceCm: distance_cm,
-            waterLevelCm: sensors.water_level.value,
+            sensorId: sensor_id, // keep storing for cross-ref
+            distanceCm,
+            waterLevelCm,
             relayStatus: relays?.water_pump || "unknown",
+            // timestamp auto-handled by schema if available
           });
 
           responses.water = {
@@ -83,22 +109,20 @@ router.post("/reading", async (req, res) => {
             tankId: tankConfig.tankId,
           };
 
-          log.info("Water level processed", {
+          log.info("Water reading processed", {
             sensor_id,
             tankId: tankConfig.tankId,
-            distance_cm,
-            waterLevelCm: sensors.water_level.value,
+            tankHeightCm: tankHeight,
+            usedField: hasDistance
+              ? "water_distance"
+              : "water_level(as distance)",
+            distanceCm,
+            waterLevelCm,
           });
-        } else {
-          responses.water = {
-            success: false,
-            error: "No tank configuration found for sensor",
-          };
-          log.warn("No tank configuration found for sensor", { sensor_id });
         }
       } catch (error) {
         errors.push({ type: "water", error: error.message });
-        log.error("Error processing water level", {
+        log.error("Error processing water", {
           sensor_id,
           message: error.message,
           stack: error.stack,
@@ -106,16 +130,14 @@ router.post("/reading", async (req, res) => {
       }
     }
 
-    // Process Soil Moisture Data (single-zone hard link)
+    // ===== Soil Moisture (single-zone) =====
     if (sensors.soil_moisture && sensors.soil_moisture.valid) {
       try {
-        // Always fetch the zone config by the hardcoded zone id
         const zoneConfig = await database.ZoneConfig.findOne({
           zoneId: HARD_ZONE_ID,
         });
 
         if (zoneConfig) {
-          // Get current moisture targets (fallback safe)
           let targets;
           try {
             targets = await zoneConfig.getCurrentMoistureTargets();
@@ -133,10 +155,10 @@ router.post("/reading", async (req, res) => {
           }
 
           const readingData = {
-            zoneId: zoneConfig.zoneId, // <-- hard link to zone_001
-            sensorId: sensor_id, // still record which device sent it
+            zoneId: zoneConfig.zoneId, // hard link
+            sensorId: sensor_id,
             moisturePercentage: sensors.soil_moisture.value,
-            rawValue: 0, // Not provided by nRF9160
+            rawValue: 0,
             temperature: sensors.environmental?.temperature?.valid
               ? sensors.environmental.temperature.value
               : null,
@@ -151,7 +173,6 @@ router.post("/reading", async (req, res) => {
 
           const reading = new database.SoilMoistureReading(readingData);
 
-          // Check if irrigation should be triggered
           let shouldIrrigate = false;
           try {
             shouldIrrigate = await reading.shouldTriggerIrrigation();
@@ -210,22 +231,21 @@ router.post("/reading", async (req, res) => {
       }
     }
 
-    // Process Environmental Data
+    // ===== Environmental =====
     if (sensors.environmental && sensors.environmental.valid) {
       try {
         const envData = {
           sensorId: sensor_id,
           location: location || "field_station_1",
-          temperatureCelsius: sensors.environmental.temperature?.valid // <--- Corrected name
+          temperatureCelsius: sensors.environmental.temperature?.valid
             ? sensors.environmental.temperature.value
             : null,
-          humidityPercent: sensors.environmental.humidity?.valid // <--- Corrected name
+          humidityPercent: sensors.environmental.humidity?.valid
             ? sensors.environmental.humidity.value
             : null,
           timestamp: new Date(),
         };
 
-        // Save environmental data (you may need to create this schema)
         const envReading = new database.EnvironmentalReading(envData);
         await envReading.save();
 
@@ -250,7 +270,7 @@ router.post("/reading", async (req, res) => {
       }
     }
 
-    // Check for pending commands
+    // ===== Pending commands =====
     if (pendingUnifiedCommands.has(sensor_id)) {
       const cmd = pendingUnifiedCommands.get(sensor_id);
       pendingUnifiedCommands.delete(sensor_id);
@@ -269,10 +289,9 @@ router.post("/reading", async (req, res) => {
       responses: responses,
       errors: errors.length > 0 ? errors : undefined,
       message: "Multi-sensor reading processed",
-      timestamp: new Date(), // Backend generates its own timestamp for the response
+      timestamp: new Date(),
     };
 
-    // Add manual command if exists
     if (manualCommand) {
       response.manualCommand = manualCommand;
     }
@@ -298,12 +317,11 @@ router.post("/reading", async (req, res) => {
   }
 });
 
-// GET /api/sensors/pending-commands/:sensorId - Check for pending commands across all systems
+// GET /api/sensors/pending-commands/:sensorId
 router.get("/pending-commands/:sensorId", async (req, res) => {
   try {
     const { sensorId } = req.params;
 
-    // Check if there are any pending commands for this sensor
     if (pendingUnifiedCommands.has(sensorId)) {
       const command = pendingUnifiedCommands.get(sensorId);
       pendingUnifiedCommands.delete(sensorId);
@@ -328,7 +346,7 @@ router.get("/pending-commands/:sensorId", async (req, res) => {
   }
 });
 
-// POST /api/sensors/command - Send command to nRF9160 (unified command interface)
+// POST /api/sensors/command
 router.post("/command", async (req, res) => {
   try {
     const { sensor_id, action, target, trigger = "manual" } = req.body;
@@ -365,42 +383,29 @@ router.post("/command", async (req, res) => {
       });
     }
 
-    // Store unified command
     const command = {
-      action: action,
-      target: target,
-      trigger: trigger,
+      action,
+      target,
+      trigger,
       timestamp: new Date(),
     };
 
     pendingUnifiedCommands.set(sensor_id, command);
 
-    console.log(
-      `Queued ${action} command for ${target} on sensor ${sensor_id}`
-    );
     log.info("Queued command", { sensor_id, command });
 
-    const payload = {
+    res.json({
       success: true,
       data: {
         sensorId: sensor_id,
-        action: action,
-        target: target,
-        trigger: trigger,
+        action,
+        target,
+        trigger,
         queued: true,
         timestamp: new Date(),
       },
       message: `Command queued for nRF9160 sensor ${sensor_id}`,
-    };
-
-    log.info("POST /api/sensors/command success", {
-      sensor_id,
-      action,
-      target,
-      trigger,
     });
-
-    res.json(payload);
   } catch (error) {
     log.error("Error queuing unified command", {
       message: error.message,
@@ -414,15 +419,14 @@ router.post("/command", async (req, res) => {
   }
 });
 
-// GET /api/sensors/status/:sensorId - Get comprehensive status for a sensor
+// GET /api/sensors/status/:sensorId
 router.get("/status/:sensorId", async (req, res) => {
   try {
     const { sensorId } = req.params;
 
-    // Get latest readings from all sensor types
     const tankConfig = await database.TankConfig.findOne({ sensorId });
 
-    // For soil: always use hardcoded zone id
+    // Soil (hardcoded zone id)
     const zoneConfig = await database.ZoneConfig.findOne({
       zoneId: HARD_ZONE_ID,
     });
@@ -437,6 +441,7 @@ router.get("/status/:sensorId", async (req, res) => {
       waterStatus = {
         tankId: tankConfig.tankId,
         location: tankConfig.location,
+        tankHeightCm: tankConfig.tankHeightCm, // <== expose for UI %
         latestReading: latestWaterReading,
       };
     }
@@ -476,10 +481,8 @@ router.get("/status/:sensorId", async (req, res) => {
 router.get("/history/:sensorId", async (req, res) => {
   const { sensorId } = req.params;
 
-  // normalize + defaults
   const { param = "all", from, to, agg = "raw", interval = "1h" } = req.query;
 
-  // ---- helpers ----
   const parseInterval = (s) => {
     const m = String(s || "1h")
       .trim()
@@ -518,7 +521,6 @@ router.get("/history/:sensorId", async (req, res) => {
     });
   }
 
-  // param aliases
   const paramNorm = String(param).toLowerCase();
   const ALIASES = {
     temp: "temperature",
@@ -540,51 +542,52 @@ router.get("/history/:sensorId", async (req, res) => {
   };
   const resolved = ALIASES[paramNorm] || paramNorm;
 
-  // where we pull each series from + which field to aggregate
   const SERIES = {
     temperature: {
       collection: () => database.EnvironmentalReading,
       field: "temperatureCelsius",
+      matchBy: "sensor", // custom
     },
     humidity: {
       collection: () => database.EnvironmentalReading,
       field: "humidityPercent",
+      matchBy: "sensor",
     },
     soil: {
       collection: () => database.SoilMoistureReading,
       field: "moisturePercentage",
+      matchBy: "sensor",
     },
     water_level: {
       collection: () => database.WaterReading,
       field: "waterLevelCm",
+      matchBy: "tank", // <== use tankId
     },
     water_distance: {
       collection: () => database.WaterReading,
       field: "distanceCm",
+      matchBy: "tank", // <== use tankId
     },
   };
 
-  // shared time / sensor match (supports either 'timestamp' or 'createdAt')
-  const baseMatch = {
-    sensorId,
+  const timeMatch = {
     $or: [
       { timestamp: { $gte: start, $lte: end } },
       { createdAt: { $gte: start, $lte: end } },
     ],
   };
 
-  // build a pipeline for a given numeric field
-  const buildAgg = (field) => {
+  const buildAggWithMatch = (field, match) => {
     if (aggNorm === "raw") {
       return [
-        { $match: baseMatch },
+        { $match: match },
         { $addFields: { ts: { $ifNull: ["$timestamp", "$createdAt"] } } },
         { $sort: { ts: 1 } },
         { $project: { _id: 0, ts: 1, value: `$${field}` } },
       ];
     }
     return [
-      { $match: baseMatch },
+      { $match: match },
       { $addFields: { ts: { $ifNull: ["$timestamp", "$createdAt"] } } },
       {
         $group: {
@@ -606,20 +609,38 @@ router.get("/history/:sensorId", async (req, res) => {
     ];
   };
 
+  const tankConfigForSensor = async (sid) => {
+    try {
+      return await database.TankConfig.findOne({ sensorId: sid });
+    } catch {
+      return null;
+    }
+  };
+
   const fetchSeries = async (key) => {
     const spec = SERIES[key];
     if (!spec) {
       throw new Error(`Unknown series: ${key}`);
     }
     const Model = spec.collection();
-    return Model.aggregate(buildAgg(spec.field));
+
+    let match;
+    if (spec.matchBy === "tank") {
+      const tcfg = await tankConfigForSensor(sensorId);
+      if (!tcfg) return [];
+      match = { tankId: tcfg.tankId, ...timeMatch };
+    } else {
+      match = { sensorId, ...timeMatch };
+    }
+
+    return Model.aggregate(buildAggWithMatch(spec.field, match));
   };
 
   try {
     let result;
 
     if (resolved === "all") {
-      const keys = Object.keys(SERIES); // temp, humidity, soil, water_level, water_distance
+      const keys = Object.keys(SERIES);
       const data = await Promise.all(keys.map((k) => fetchSeries(k)));
       result = keys.reduce((acc, k, idx) => {
         acc[k] = data[idx];
@@ -643,7 +664,7 @@ router.get("/history/:sensorId", async (req, res) => {
         from: start.toISOString(),
         to: end.toISOString(),
         agg: aggNorm,
-        interval: `${binSize}${unit[0]}`, // echo "1h" style
+        interval: `${binSize}${unit[0]}`,
       },
       readings: result,
     });
@@ -653,7 +674,7 @@ router.get("/history/:sensorId", async (req, res) => {
   }
 });
 
-// GET /api/sensors/health - Health check for sensors system
+// GET /api/sensors/health
 router.get("/health", async (req, res) => {
   try {
     const totalSensors =
