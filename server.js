@@ -64,6 +64,8 @@ app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 // Initialize database
 database.init();
 
+const { startMachineSweeper } = require("./services/machineSweeper");
+startMachineSweeper();
 // Routes
 app.use("/api/water", waterRoutes);
 app.use("/api/soil", soilmoistureRoutes);
@@ -71,7 +73,7 @@ app.use("/api/ai", aiRoutes);
 app.use("/api/video", videoAnalysisRoutes); // Add video analysis routes
 app.use("/api/environmental", environmentalRoutes);
 app.use("/api/sensors", sensorsRoutes);
-
+app.use("/api/machines", require("./routes/machines"));
 // Health check endpoint
 app.get("/health", (req, res) => {
   res.json({
