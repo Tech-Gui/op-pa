@@ -50,6 +50,7 @@ app.use(
       "http://127.0.0.1:5173", // Alternative localhost
       "https://opptapp.onrender.com",
       "https://dataportal-2l83.onrender.com",
+      "https://setcareers.onrender.com",
       process.env.FRONTEND_URL || "http://localhost:5173",
     ],
     credentials: true,
