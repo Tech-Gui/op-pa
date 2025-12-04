@@ -1,0 +1,56 @@
+[
+  {
+    "id": "set3-overview",
+    "title": "Science Engineering and Technology Edition 3",
+    "section": "Orientation",
+    "summary": "Edition 3 frames science, engineering, and technology as connected pathways. Learners explore how scientific inquiry moves into engineered solutions and technology products.",
+    "skills": ["inquiry", "problem solving", "data literacy", "communication"],
+    "careerExamples": ["STEM educator", "curriculum designer", "community science facilitator"],
+    "practicalActivities": ["Design a classroom demo showing the scientific method feeding an engineered prototype", "Map a local problem to a technology solution with user feedback"]
+  },
+  {
+    "id": "set3-lab-science",
+    "title": "Laboratory and Field Science Careers",
+    "section": "Applied Science",
+    "summary": "Covers careers that collect data, run experiments, and validate findings. Emphasizes documentation, lab safety, instrumentation, and ethics.",
+    "skills": ["instrument handling", "documentation", "statistics", "ethics"],
+    "careerExamples": ["laboratory technician", "environmental scientist", "biotechnology associate"],
+    "practicalActivities": ["Create a sample lab notebook entry with controls and variables", "Plan a field survey with data validation steps"]
+  },
+  {
+    "id": "set3-engineering",
+    "title": "Engineering Design Tracks",
+    "section": "Engineering",
+    "summary": "Shows how engineers move from requirements to prototypes and testing loops. Stresses collaboration, safety factors, and iterative design.",
+    "skills": ["requirements analysis", "CAD literacy", "prototyping", "testing"],
+    "careerExamples": ["mechanical engineering intern", "civil engineering technologist", "manufacturing process analyst"],
+    "practicalActivities": ["Rewrite vague requirements into testable specifications", "Draft a simple design review checklist"]
+  },
+  {
+    "id": "set3-technology",
+    "title": "Technology and Computing",
+    "section": "Technology",
+    "summary": "Highlights careers that turn engineered designs into digital and hardware products. Focus on software practices, networks, and user-centered design.",
+    "skills": ["programming fundamentals", "network basics", "UI testing", "cyber hygiene"],
+    "careerExamples": ["junior developer", "IT support specialist", "QA analyst"],
+    "practicalActivities": ["Build a small troubleshooting guide for common device issues", "Outline a usability test script for a prototype app"]
+  },
+  {
+    "id": "set3-sustainability",
+    "title": "Sustainable and Emerging Tech",
+    "section": "Innovation",
+    "summary": "Connects STEM careers to sustainability, renewable energy, and responsible innovation. Encourages life-cycle thinking and community impact.",
+    "skills": ["life-cycle analysis", "systems thinking", "sensor literacy", "data interpretation"],
+    "careerExamples": ["renewable energy technician", "agritech field associate", "smart systems installer"],
+    "practicalActivities": ["Compare the footprint of two materials for the same product", "Plan a sensor layout for monitoring a small site"]
+  },
+  {
+    "id": "set3-career-readiness",
+    "title": "Career Readiness and Portfolios",
+    "section": "Career Development",
+    "summary": "Guides learners to assemble evidence of skills: projects, certifications, reflection, and community work. Encourages informational interviews and mentoring.",
+    "skills": ["portfolio building", "reflection", "professional communication", "goal setting"],
+    "careerExamples": ["career pathways ambassador", "STEM outreach assistant", "technical writer"],
+    "practicalActivities": ["Draft a one-page portfolio that links a project to specific skills", "List three mentors and questions for an informational interview"]
+  }
+]
