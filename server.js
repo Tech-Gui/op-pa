@@ -256,6 +256,7 @@ app.use((req, res) => {
     availableEndpoints: [
       "GET /health",
       "GET /api/health",
+      "POST /api/rag/*",
       "POST /api/ai/*",
       "POST /api/video/*",
       "GET /api/water/*",
