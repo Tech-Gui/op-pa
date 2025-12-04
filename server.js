@@ -11,6 +11,7 @@ const videoAnalysisRoutes = require("./routes/video-analysis"); // Add video ana
 const environmentalRoutes = require("./routes/environmental");
 const sensorsRoutes = require("./routes/sensors");
 const machineRoutes = require("./routes/machines");
+const ragRoutes = require("./routes/rag");
 
 require("dotenv").config();
 
@@ -22,6 +23,7 @@ const ensureDirectoriesExist = () => {
   const directories = [
     "uploads",
     "uploads/frames",
+    "uploads/audio",
     "uploads/weekly-logs",
     "data",
     "logs",
@@ -75,6 +77,7 @@ app.use("/api/video", videoAnalysisRoutes); // Add video analysis routes
 app.use("/api/environmental", environmentalRoutes);
 app.use("/api/sensors", sensorsRoutes);
 app.use("/api/machines", machineRoutes);
+app.use("/api/rag", ragRoutes);
 // Health check endpoint
 app.get("/health", (req, res) => {
   res.json({
@@ -123,6 +126,7 @@ app.get("/", (req, res) => {
       "POST /api/ai/weekly-log - Save weekly plant log with AI analysis",
       "GET /api/ai/weekly-logs/:fieldId - Get weekly logs for field",
       "POST /api/ai/weekly-log/:logId/comment - Regenerate AI comment",
+      "POST /api/rag/careers - RAG answers for Science Engineering and Technology (text or voice)",
 
       // Real-time Video Security
       "POST /api/video/analyze-frame - Analyze video frame for threats",
@@ -276,6 +280,7 @@ app.listen(PORT, "0.0.0.0", () => {
   console.log("   📝 Weekly Plant Logs: /api/ai/weekly-log");
   console.log("   📹 Video Security Analysis: /api/video/analyze-frame");
   console.log("   📈 Analysis Statistics: /api/video/analysis-stats");
+  console.log("   📘 SET Careers RAG: /api/rag/careers");
   console.log("");
   console.log("🤖 AI Integration Status:");
   console.log(
