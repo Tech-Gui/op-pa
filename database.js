@@ -983,11 +983,12 @@ async function createDefaultTank() {
         maxCapacityLiters: 5000,
         minThresholdCm: 20,
         location: "Main Field",
+        sensorId: "351901936740061", // Default sensor ID
         isActive: true,
       });
 
       await defaultTank.save();
-      console.log("Default tank configuration created");
+      console.log("Default tank configuration created with default sensor ID");
     }
   } catch (error) {
     console.error("Error creating default tank:", error);

@@ -64,6 +64,17 @@ router.post("/reading", async (req, res) => {
         });
 
         if (!tankConfig) {
+          // PROACTIVE FIX: If this is the only sensor and we have a main_tank unassigned, link them.
+          const mainTank = await database.TankConfig.findOne({ tankId: "main_tank" });
+          if (mainTank && (!mainTank.sensorId || mainTank.sensorId === "unassigned")) {
+            mainTank.sensorId = sensor_id;
+            await mainTank.save();
+            log.info("Auto-assigned sensor to main_tank", { sensor_id });
+            tankConfig = mainTank; // Continue processing with this tank
+          }
+        }
+
+        if (!tankConfig) {
           responses.water = {
             success: false,
             error: "No tank configuration found for sensor",
@@ -569,7 +580,13 @@ router.get("/status/:sensorId", async (req, res) => {
   try {
     const { sensorId } = req.params;
 
-    const tankConfig = await database.TankConfig.findOne({ sensorId });
+    let tankConfig = await database.TankConfig.findOne({ sensorId });
+    
+    // Fallback: if no sensor mapping, but we only have one tank (main_tank), use it
+    if (!tankConfig) {
+      tankConfig = await database.TankConfig.findOne({ tankId: "main_tank" });
+    }
+
     const zoneConfig = await database.ZoneConfig.findOne({
       zoneId: HARD_ZONE_ID,
     });
