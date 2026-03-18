@@ -269,7 +269,7 @@ router.post("/reading", async (req, res) => {
       manualCommand = {
         action: popped.action,
         target: popped.target,
-        trigger: popped.trigger,
+        trigger: popped.action === "set_automation" || popped.action === "set_interval" ? popped.value : popped.trigger,
         timestamp: popped.createdAt,
       };
     }
@@ -325,7 +325,7 @@ router.get("/pending-commands/:sensorId", async (req, res) => {
         manualCommand: {
           action: cmd.action,
           target: cmd.target,
-          trigger: cmd.trigger,
+          trigger: cmd.action === "set_automation" || cmd.action === "set_interval" ? cmd.value : cmd.trigger,
           timestamp: cmd.createdAt,
         },
       });
@@ -359,10 +359,10 @@ router.post("/command", async (req, res) => {
         .status(400)
         .json({ error: "Missing required fields: sensor_id, action, target" });
     }
-    if (!["start", "stop"].includes(action)) {
+    if (!["start", "stop", "set_automation"].includes(action)) {
       return res
         .status(400)
-        .json({ error: "Invalid action. Must be 'start' or 'stop'" });
+        .json({ error: "Invalid action. Must be 'start', 'stop', or 'set_automation'" });
     }
     if (!["water_pump", "irrigation"].includes(target)) {
       return res.status(400).json({
@@ -405,7 +405,122 @@ router.post("/command", async (req, res) => {
 });
 
 // =========================================
-// POST /api/sensors/command/ack  (optional but recommended)
+// POST /api/sensors/automation
+// =========================================
+router.post("/automation", async (req, res) => {
+  try {
+    const { sensor_id, target, enabled } = req.body;
+
+    log.info("POST /api/sensors/automation received", {
+      sensor_id,
+      target,
+      enabled,
+    });
+
+    if (!sensor_id || !target || typeof enabled !== "boolean") {
+      return res.status(400).json({
+        error:
+          "Missing required fields: sensor_id, target (water_pump|irrigation), enabled (boolean)",
+      });
+    }
+    if (!["water_pump", "irrigation"].includes(target)) {
+      return res.status(400).json({
+        error: "Invalid target. Must be 'water_pump' or 'irrigation'",
+      });
+    }
+
+    const cmd = await PendingCommand.create({
+      sensorId: sensor_id,
+      action: "set_automation",
+      target,
+      trigger: "manual",
+      value: enabled ? "on" : "off",
+      status: "queued",
+    });
+
+    log.info("Queued automation command (DB)", {
+      sensor_id,
+      target,
+      enabled,
+    });
+
+    res.json({
+      success: true,
+      data: {
+        id: cmd._id,
+        sensorId: sensor_id,
+        action: "set_automation",
+        target,
+        enabled,
+        queued: true,
+        timestamp: cmd.createdAt,
+      },
+      message: `Automation ${enabled ? "enabled" : "disabled"} for ${target} on sensor ${sensor_id}`,
+    });
+  } catch (error) {
+    log.error("Error queuing automation command", {
+      message: error.message,
+      stack: error.stack,
+    });
+    res
+      .status(500)
+      .json({ error: "Failed to queue automation command", message: error.message });
+  }
+});
+
+// =========================================
+// POST /api/sensors/interval
+// =========================================
+router.post("/interval", async (req, res) => {
+  try {
+    const { sensor_id, interval } = req.body;
+
+    log.info("POST /api/sensors/interval received", { sensor_id, interval });
+
+    if (!sensor_id || !interval || isNaN(interval)) {
+      return res.status(400).json({
+        error: "Missing required fields: sensor_id and interval (numeric)",
+      });
+    }
+
+    const intervalNum = parseInt(interval, 10);
+    if (intervalNum < 10 || intervalNum > 3600) {
+      return res.status(400).json({
+        error: "Invalid interval. Must be between 10 and 3600 seconds.",
+      });
+    }
+
+    const cmd = await PendingCommand.create({
+      sensorId: sensor_id,
+      action: "set_interval",
+      target: "environmental_sensor",
+      trigger: "manual",
+      value: String(intervalNum),
+      status: "queued",
+    });
+
+    log.info("Queued interval command (DB)", { sensor_id, intervalNum });
+
+    res.json({
+      success: true,
+      data: {
+        id: cmd._id,
+        sensorId: sensor_id,
+        action: "set_interval",
+        interval: intervalNum,
+        queued: true,
+        timestamp: cmd.createdAt,
+      },
+      message: `Interval update to ${intervalNum}s queued for sensor ${sensor_id}`,
+    });
+  } catch (error) {
+    log.error("Error queuing interval command", {
+      message: error.message,
+      stack: error.stack,
+    });
+    res.status(500).json({ error: "Failed to queue interval command", message: error.message });
+  }
+});
 // body: { sensor_id, action, target, success: boolean }
 // =========================================
 router.post("/command/ack", async (req, res) => {
@@ -478,6 +593,9 @@ router.get("/status/:sensorId", async (req, res) => {
         water: waterStatus,
         soil: soilStatus,
         hasPendingCommands: queuedCount > 0,
+        config: {
+          report_interval: 60, // Default or fetch from latest reading if available
+        },
         timestamp: new Date(),
       },
     });
