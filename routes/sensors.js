@@ -598,14 +598,15 @@ router.get("/status/:sensorId", async (req, res) => {
       const latestWaterReading = await database.getLatestWaterReading(
         tankConfig.tankId
       );
-      waterStatus = {
-        tankId: tankConfig.tankId,
-        location: tankConfig.location,
-        tankHeightCm: tankConfig.tankHeightCm, // for UI %
-        automationEnabled: tankConfig.automationEnabled ?? true,
-        reportInterval: tankConfig.reportInterval ?? 1, // minutes
-        latestReading: latestWaterReading,
-      };
+        waterStatus = {
+          tankId: tankConfig.tankId,
+          location: tankConfig.location,
+          tankHeightCm: tankConfig.tankHeightCm,
+          maxCapacityLiters: tankConfig.maxCapacityLiters, // Added for frontend accuracy
+          automationEnabled: tankConfig.automationEnabled ?? true,
+          reportInterval: tankConfig.reportInterval ?? 1,
+          latestReading: latestWaterReading,
+        };
     }
 
     if (zoneConfig) {

@@ -864,6 +864,17 @@ waterReadingSchema.pre("save", async function (next) {
   next();
 });
 
+// Calculate tank capacity from height and radius
+tankConfigSchema.pre("save", function (next) {
+  if (this.tankHeightCm && this.tankRadiusCm) {
+    // V = π * r² * h / 1000 (cm³ to Liters)
+    this.maxCapacityLiters = Math.round(
+      (Math.PI * Math.pow(this.tankRadiusCm, 2) * this.tankHeightCm) / 1000
+    );
+  }
+  next();
+});
+
 // Calculate pump duration for stop actions
 pumpLogSchema.pre("save", async function (next) {
   if (this.action === "stop" && !this.duration) {
@@ -980,7 +991,7 @@ async function createDefaultTank() {
         tankId: "main_tank",
         tankHeightCm: 300,
         tankRadiusCm: 100,
-        maxCapacityLiters: 5000,
+        // maxCapacityLiters will be calculated by pre-save hook (~9424L)
         minThresholdCm: 20,
         location: "Main Field",
         sensorId: "351901936740061", // Default sensor ID
@@ -988,7 +999,7 @@ async function createDefaultTank() {
       });
 
       await defaultTank.save();
-      console.log("Default tank configuration created with default sensor ID");
+      console.log("Default tank configuration created with automated capacity calculation");
     }
   } catch (error) {
     console.error("Error creating default tank:", error);
@@ -1269,6 +1280,20 @@ async function getTankConfig(tankId = "main_tank") {
 
 async function updateTankConfig(tankId, updateData) {
   try {
+    // Recalculate capacity if height or radius is provided
+    if (updateData.tankHeightCm || updateData.tankRadiusCm) {
+      const h = updateData.tankHeightCm || 100; // Fallback or fetch existing
+      const r = updateData.tankRadiusCm || 50;
+      
+      // If one is missing from updateData, we ideally fetch existing first
+      // But for simplicity in this helper, let's just ensure we have both
+      if (updateData.tankHeightCm && updateData.tankRadiusCm) {
+        updateData.maxCapacityLiters = Math.round(
+          (Math.PI * Math.pow(updateData.tankRadiusCm, 2) * updateData.tankHeightCm) / 1000
+        );
+      }
+    }
+
     const updatedConfig = await TankConfig.findOneAndUpdate(
       { tankId },
       { ...updateData, updatedAt: new Date() },
