@@ -170,6 +170,10 @@ const zoneConfigSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+    automationEnabled: {
+      type: Boolean,
+      default: true,
+    },
     lastIrrigation: {
       type: Date,
       default: null,

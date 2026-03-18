@@ -87,6 +87,14 @@ const tankConfigSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+    automationEnabled: {
+      type: Boolean,
+      default: true,
+    },
+    reportInterval: {
+      type: Number,
+      default: 1, // minutes
+    },
   },
   {
     timestamps: true,

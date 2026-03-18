@@ -30,11 +30,13 @@ const safeTankHeight = (cfg) => {
 // =========================================
 router.post("/reading", async (req, res) => {
   try {
-    const { sensor_id, sensors, relays, location } = req.body;
+    const { sensor_id, sensors, relays, automation, config, location } = req.body;
 
     log.info("POST /api/sensors/reading received", {
       sensor_id,
       hasSensors: !!sensors,
+      hasAutomation: !!automation,
+      hasConfig: !!config,
       sensorKeys: sensors ? Object.keys(sensors) : [],
       relayKeys: relays ? Object.keys(relays) : [],
       location: location || null,
@@ -94,6 +96,14 @@ router.post("/reading", async (req, res) => {
             waterLevelCm,
             relayStatus: relays?.water_pump || "unknown",
           });
+
+          // Sync incoming hardware state with database
+          if (automation?.water_pump || config?.report_interval) {
+            const updates = {};
+            if (automation?.water_pump) updates.automationEnabled = (automation.water_pump === "on");
+            if (config?.report_interval) updates.reportInterval = config.report_interval;
+            await database.TankConfig.findOneAndUpdate({ sensorId: sensor_id }, { $set: updates });
+          }
 
           responses.water = {
             success: true,
@@ -187,6 +197,14 @@ router.post("/reading", async (req, res) => {
             await database.ZoneConfig.findOneAndUpdate(
               { zoneId: zoneConfig.zoneId },
               { lastIrrigation: new Date() }
+            );
+          }
+
+          // Sync incoming hardware state with database
+          if (automation?.irrigation) {
+            await database.ZoneConfig.findOneAndUpdate(
+              { zoneId: zoneConfig.zoneId },
+              { $set: { automationEnabled: (automation.irrigation === "on") } }
             );
           }
 
@@ -567,6 +585,8 @@ router.get("/status/:sensorId", async (req, res) => {
         tankId: tankConfig.tankId,
         location: tankConfig.location,
         tankHeightCm: tankConfig.tankHeightCm, // for UI %
+        automationEnabled: tankConfig.automationEnabled ?? true,
+        reportInterval: tankConfig.reportInterval ?? 1, // minutes
         latestReading: latestWaterReading,
       };
     }
@@ -577,6 +597,7 @@ router.get("/status/:sensorId", async (req, res) => {
       soilStatus = {
         zoneId: zoneConfig.zoneId,
         zoneName: zoneConfig.name,
+        automationEnabled: zoneConfig.automationEnabled ?? true,
         latestReading: latestSoilReading,
       };
     }
