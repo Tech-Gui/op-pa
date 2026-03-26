@@ -409,6 +409,37 @@ router.post("/command", async (req, res) => {
 
     log.info("Queued command (DB)", { sensor_id, action, target, trigger });
 
+    // ENFORCE AUTOMATION OVERRIDE: 
+    // If a manual start/stop command is sent, ensure we also disable automation
+    if (action === "start" || action === "stop") {
+      try {
+        await PendingCommand.create({
+          sensorId: sensor_id,
+          action: "set_automation",
+          target,
+          trigger: "manual_override",
+          value: "off",
+          status: "queued",
+        });
+
+        if (target === "water_pump") {
+          await database.TankConfig.findOneAndUpdate(
+            { sensorId: sensor_id },
+            { $set: { automationEnabled: false } }
+          );
+        } else if (target === "irrigation") {
+          // Applies to the default/hardcoded zone
+          await database.ZoneConfig.findOneAndUpdate(
+            {},
+            { $set: { automationEnabled: false } }
+          );
+        }
+        log.info("Queued automation override and updated DB", { target });
+      } catch (err) {
+        log.error("Failed to apply automation override", { error: err.message });
+      }
+    }
+
     res.json({
       success: true,
       data: {
