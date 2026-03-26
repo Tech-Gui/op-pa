@@ -108,19 +108,13 @@ router.post("/reading", async (req, res) => {
             relayStatus: relays?.water_pump || "unknown",
           });
 
-          // Sync incoming hardware state with database
-          if (automation?.water_pump || config?.report_interval) {
-            const updates = {};
-            if (automation?.water_pump) updates.automationEnabled = (automation.water_pump === "on");
-            if (config?.report_interval) updates.reportInterval = config.report_interval;
-            await database.TankConfig.findOneAndUpdate({ sensorId: sensor_id }, { $set: updates });
-          }
-
           responses.water = {
             success: true,
             data: result.data,
             tankId: tankConfig.tankId,
           };
+
+          responses.water_processed = true; // Mark as processed for this request
 
           log.info("Water reading processed", {
             sensor_id,
@@ -211,20 +205,14 @@ router.post("/reading", async (req, res) => {
             );
           }
 
-          // Sync incoming hardware state with database
-          if (automation?.irrigation) {
-            await database.ZoneConfig.findOneAndUpdate(
-              { zoneId: zoneConfig.zoneId },
-              { $set: { automationEnabled: (automation.irrigation === "on") } }
-            );
-          }
-
           responses.soil = {
             success: true,
             data: saved,
             irrigationTriggered: shouldIrrigate,
             zoneId: zoneConfig.zoneId,
           };
+
+          responses.soil_processed = true; // Mark as processed for this request
 
           log.info("Soil moisture processed (single-zone)", {
             sensor_id,
@@ -286,6 +274,72 @@ router.post("/reading", async (req, res) => {
           stack: error.stack,
         });
       }
+    }
+
+    // ===== FALLBACK: PROCESS RELAY STATUS & AUTOMATION EVEN IF SENSORS WERE INVALID =====
+    try {
+      // 1. Sync Automation / Config Settings
+      if (automation || config) {
+        const updates = {};
+        if (automation?.water_pump)
+          updates.automationEnabled = automation.water_pump === "on";
+        if (config?.report_interval)
+          updates.reportInterval = config.report_interval;
+
+        if (Object.keys(updates).length > 0) {
+          await database.TankConfig.findOneAndUpdate(
+            { sensorId: sensor_id },
+            { $set: updates }
+          );
+        }
+
+        if (automation?.irrigation) {
+          await database.ZoneConfig.findOneAndUpdate(
+            { zoneId: HARD_ZONE_ID },
+            { $set: { automationEnabled: automation.irrigation === "on" } }
+          );
+        }
+      }
+
+      // 2. Record Water Pump Status if not already done
+      if (relays?.water_pump && !responses.water_processed) {
+        const tankConfig = await database.TankConfig.findOne({
+          sensorId: sensor_id,
+        });
+        if (tankConfig) {
+          await database.insertWaterReading({
+            tankId: tankConfig.tankId,
+            sensorId: sensor_id,
+            distanceCm: null,
+            waterLevelCm: null,
+            relayStatus: relays.water_pump,
+            isStatusOnly: true,
+          });
+          log.info("Recorded relay-only water status update", {
+            sensor_id,
+            status: relays.water_pump,
+          });
+        }
+      }
+
+      // 3. Record Irrigation Status if not already done
+      if (relays?.irrigation && !responses.soil_processed) {
+        await new database.SoilMoistureReading({
+          zoneId: HARD_ZONE_ID,
+          sensorId: sensor_id,
+          moisturePercentage: null,
+          relayStatus: relays.irrigation,
+          isStatusOnly: true,
+        }).save();
+        log.info("Recorded relay-only soil status update", {
+          sensor_id,
+          status: relays.irrigation,
+        });
+      }
+    } catch (err) {
+      log.error("Error in relay/automation fallback sync", {
+        error: err.message,
+      });
     }
 
     // ===== Atomically pop a queued command for this sensor =====
