@@ -303,37 +303,46 @@ router.post("/reading", async (req, res) => {
 
       // 2. Record Water Pump Status if not already done
       if (relays?.water_pump && !responses.water_processed) {
-        const tankConfig = await database.TankConfig.findOne({
+        let tankConfig = await database.TankConfig.findOne({
           sensorId: sensor_id,
         });
+        if (!tankConfig) {
+          tankConfig = await database.TankConfig.findOne({ tankId: "main_tank" });
+        }
+
         if (tankConfig) {
+          // Carry forward latest reading to satisfy schema requirements
+          const latest = await database.getLatestWaterReading(tankConfig.tankId);
           await database.insertWaterReading({
             tankId: tankConfig.tankId,
             sensorId: sensor_id,
-            distanceCm: null,
-            waterLevelCm: null,
+            distanceCm: latest ? latest.distanceCm : 0,
+            waterLevelCm: latest ? latest.waterLevelCm : 0,
             relayStatus: relays.water_pump,
-            isStatusOnly: true,
           });
-          log.info("Recorded relay-only water status update", {
+          log.info("Recorded relay-only water status update (carried forward)", {
             sensor_id,
             status: relays.water_pump,
+            carriedDistance: latest ? latest.distanceCm : 0
           });
         }
       }
 
       // 3. Record Irrigation Status if not already done
       if (relays?.irrigation && !responses.soil_processed) {
+        const latest = await database.SoilMoistureReading.getLatestByZone(HARD_ZONE_ID);
         await new database.SoilMoistureReading({
           zoneId: HARD_ZONE_ID,
           sensorId: sensor_id,
-          moisturePercentage: null,
+          moisturePercentage: latest ? latest.moisturePercentage : 0,
           relayStatus: relays.irrigation,
-          isStatusOnly: true,
+          irrigationTriggered: latest ? latest.irrigationTriggered : false,
+          stageInfo: latest ? latest.stageInfo : undefined,
         }).save();
-        log.info("Recorded relay-only soil status update", {
+        log.info("Recorded relay-only soil status update (carried forward)", {
           sensor_id,
           status: relays.irrigation,
+          carriedMoisture: latest ? latest.moisturePercentage : 0
         });
       }
     } catch (err) {
