@@ -506,13 +506,13 @@ router.post("/command", async (req, res) => {
         if (target === "water_pump") {
           await database.TankConfig.findOneAndUpdate(
             { sensorId: sensor_id },
-            { $set: { automationEnabled: false } }
+            { $set: { automationEnabled: false, relayStatus: action === 'start' ? 'on' : 'off' } }
           );
         } else if (target === "irrigation") {
           // Applies to the default/hardcoded zone
           await database.ZoneConfig.findOneAndUpdate(
             { zoneId: HARD_ZONE_ID },
-            { $set: { automationEnabled: false } }
+            { $set: { automationEnabled: false, relayStatus: action === 'start' ? 'on' : 'off' } }
           );
         }
         log.info("Queued automation override and updated DB", { target });
