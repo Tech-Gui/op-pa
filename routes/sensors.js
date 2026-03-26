@@ -511,7 +511,7 @@ router.post("/command", async (req, res) => {
         } else if (target === "irrigation") {
           // Applies to the default/hardcoded zone
           await database.ZoneConfig.findOneAndUpdate(
-            {},
+            { zoneId: HARD_ZONE_ID },
             { $set: { automationEnabled: false } }
           );
         }
@@ -584,6 +584,19 @@ router.post("/automation", async (req, res) => {
       target,
       enabled,
     });
+
+    // IMMEDIATE SYNC: Update the configuration doc so the dashboard reflects the change instantly
+    if (target === "water_pump") {
+      await database.TankConfig.findOneAndUpdate(
+        { sensorId: sensor_id },
+        { $set: { automationEnabled: enabled } }
+      );
+    } else if (target === "irrigation") {
+      await database.ZoneConfig.findOneAndUpdate(
+        { zoneId: HARD_ZONE_ID },
+        { $set: { automationEnabled: enabled } }
+      );
+    }
 
     res.json({
       success: true,
@@ -756,6 +769,38 @@ router.get("/status/:sensorId", async (req, res) => {
     res
       .status(500)
       .json({ error: "Failed to get sensor status", message: error.message });
+  }
+});
+
+// =========================================
+// GET /api/sensors/relay-status/:sensorId
+// =========================================
+router.get("/relay-status/:sensorId", async (req, res) => {
+  try {
+    const { sensorId } = req.params;
+    let tankConfig = await database.TankConfig.findOne({ sensorId });
+    if (!tankConfig) {
+      tankConfig = await database.TankConfig.findOne({ tankId: "main_tank" });
+    }
+    const zoneConfig = await database.ZoneConfig.findOne({
+      zoneId: HARD_ZONE_ID,
+    });
+
+    res.json({
+      success: true,
+      data: {
+        water: {
+          relayStatus: tankConfig?.relayStatus || 'unknown',
+          automationEnabled: tankConfig?.automationEnabled ?? true,
+        },
+        soil: {
+          relayStatus: zoneConfig?.relayStatus || 'unknown',
+          automationEnabled: zoneConfig?.automationEnabled ?? true,
+        }
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
