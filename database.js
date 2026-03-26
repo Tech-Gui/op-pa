@@ -27,7 +27,7 @@ const waterReadingSchema = new mongoose.Schema(
     },
     distanceCm: {
       type: Number,
-      required: true,
+      required: false,
       min: 0,
     },
     waterLevelCm: {
@@ -91,6 +91,11 @@ const tankConfigSchema = new mongoose.Schema(
     sensorAssignedAt: {
       type: Date,
       default: null,
+    },
+    relayStatus: {
+      type: String,
+      enum: ["on", "off", "unknown"],
+      default: "unknown",
     },
     isActive: {
       type: Boolean,
@@ -179,7 +184,7 @@ const soilMoistureReadingSchema = new mongoose.Schema(
     },
     moisturePercentage: {
       type: Number,
-      required: true,
+      required: false,
       min: 0,
       max: 100,
     },
@@ -271,6 +276,11 @@ const zoneConfigSchema = new mongoose.Schema(
     notes: {
       type: String,
       default: "",
+    },
+    relayStatus: {
+      type: String,
+      enum: ["on", "off", "unknown"],
+      default: "unknown",
     },
     isActive: {
       type: Boolean,

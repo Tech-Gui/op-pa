@@ -108,6 +108,14 @@ router.post("/reading", async (req, res) => {
             relayStatus: relays?.water_pump || "unknown",
           });
 
+          // Also update the config for easy status retrieval
+          if (relays?.water_pump) {
+            await database.TankConfig.findOneAndUpdate(
+              { tankId: tankConfig.tankId },
+              { $set: { relayStatus: relays.water_pump } }
+            );
+          }
+
           responses.water = {
             success: true,
             data: result.data,
@@ -198,6 +206,14 @@ router.post("/reading", async (req, res) => {
 
           const saved = await reading.save();
 
+          // Also update the config for easy status retrieval
+          if (relays?.irrigation) {
+            await database.ZoneConfig.findOneAndUpdate(
+              { zoneId: zoneConfig.zoneId },
+              { $set: { relayStatus: relays.irrigation } }
+            );
+          }
+
           if (shouldIrrigate) {
             await database.ZoneConfig.findOneAndUpdate(
               { zoneId: zoneConfig.zoneId },
@@ -279,12 +295,14 @@ router.post("/reading", async (req, res) => {
     // ===== FALLBACK: PROCESS RELAY STATUS & AUTOMATION EVEN IF SENSORS WERE INVALID =====
     try {
       // 1. Sync Automation / Config Settings
-      if (automation || config) {
+      if (automation || config || relays) {
         const updates = {};
         if (automation?.water_pump)
           updates.automationEnabled = automation.water_pump === "on";
         if (config?.report_interval)
           updates.reportInterval = config.report_interval;
+        if (relays?.water_pump)
+          updates.relayStatus = relays.water_pump;
 
         if (Object.keys(updates).length > 0) {
           await database.TankConfig.findOneAndUpdate(
@@ -293,11 +311,19 @@ router.post("/reading", async (req, res) => {
           );
         }
 
-        if (automation?.irrigation) {
-          await database.ZoneConfig.findOneAndUpdate(
-            { zoneId: HARD_ZONE_ID },
-            { $set: { automationEnabled: automation.irrigation === "on" } }
-          );
+        if (automation?.irrigation || relays?.irrigation) {
+          const zoneUpdates = {};
+          if (automation?.irrigation)
+            zoneUpdates.automationEnabled = automation.irrigation === "on";
+          if (relays?.irrigation)
+            zoneUpdates.relayStatus = relays.irrigation;
+
+          if (Object.keys(zoneUpdates).length > 0) {
+            await database.ZoneConfig.findOneAndUpdate(
+              { zoneId: HARD_ZONE_ID },
+              { $set: zoneUpdates }
+            );
+          }
         }
       }
 
@@ -311,38 +337,30 @@ router.post("/reading", async (req, res) => {
         }
 
         if (tankConfig) {
-          // Carry forward latest reading to satisfy schema requirements
-          const latest = await database.getLatestWaterReading(tankConfig.tankId);
           await database.insertWaterReading({
             tankId: tankConfig.tankId,
             sensorId: sensor_id,
-            distanceCm: latest ? latest.distanceCm : 0,
-            waterLevelCm: latest ? latest.waterLevelCm : 0,
+            distanceCm: null, // NO sensor data
             relayStatus: relays.water_pump,
           });
-          log.info("Recorded relay-only water status update (carried forward)", {
+          log.info("Recorded relay-only water status sync", {
             sensor_id,
             status: relays.water_pump,
-            carriedDistance: latest ? latest.distanceCm : 0
           });
         }
       }
 
       // 3. Record Irrigation Status if not already done
       if (relays?.irrigation && !responses.soil_processed) {
-        const latest = await database.SoilMoistureReading.getLatestByZone(HARD_ZONE_ID);
         await new database.SoilMoistureReading({
           zoneId: HARD_ZONE_ID,
           sensorId: sensor_id,
-          moisturePercentage: latest ? latest.moisturePercentage : 0,
+          moisturePercentage: null, // NO sensor data
           relayStatus: relays.irrigation,
-          irrigationTriggered: latest ? latest.irrigationTriggered : false,
-          stageInfo: latest ? latest.stageInfo : undefined,
         }).save();
-        log.info("Recorded relay-only soil status update (carried forward)", {
+        log.info("Recorded relay-only soil status sync", {
           sensor_id,
           status: relays.irrigation,
-          carriedMoisture: latest ? latest.moisturePercentage : 0
         });
       }
     } catch (err) {
@@ -696,9 +714,10 @@ router.get("/status/:sensorId", async (req, res) => {
           tankId: tankConfig.tankId,
           location: tankConfig.location,
           tankHeightCm: tankConfig.tankHeightCm,
-          maxCapacityLiters: tankConfig.maxCapacityLiters, // Added for frontend accuracy
+          maxCapacityLiters: tankConfig.maxCapacityLiters,
           automationEnabled: tankConfig.automationEnabled ?? true,
           reportInterval: tankConfig.reportInterval ?? 1,
+          relayStatus: tankConfig.relayStatus || 'unknown',
           latestReading: latestWaterReading,
         };
     }
@@ -710,6 +729,7 @@ router.get("/status/:sensorId", async (req, res) => {
         zoneId: zoneConfig.zoneId,
         zoneName: zoneConfig.name,
         automationEnabled: zoneConfig.automationEnabled ?? true,
+        relayStatus: zoneConfig.relayStatus || 'unknown',
         latestReading: latestSoilReading,
       };
     }
