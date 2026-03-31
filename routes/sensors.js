@@ -805,6 +805,41 @@ router.get("/relay-status/:sensorId", async (req, res) => {
 });
 
 // =========================================
+// GET /api/sensors/relay-logs/:sensorId
+// Returns recent relay command history
+// =========================================
+router.get("/relay-logs/:sensorId", async (req, res) => {
+  try {
+    const { sensorId } = req.params;
+    const limit = parseInt(req.query.limit) || 10;
+
+    const logs = await PendingCommand.find({
+      sensorId,
+      action: { $in: ["start", "stop", "set_automation"] },
+      target: { $in: ["water_pump", "irrigation"] },
+    })
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .lean();
+
+    res.json({
+      success: true,
+      data: logs.map((l) => ({
+        id: l._id,
+        target: l.target,
+        action: l.action,
+        value: l.value,
+        trigger: l.trigger,
+        status: l.status,
+        timestamp: l.createdAt,
+      })),
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// =========================================
 // GET /api/sensors/history/:sensorId
 // ?param=temperature|humidity|soil|water_level|water_distance|all
 // &from&to&agg=raw|min|max|avg&interval=15m|1h|2d|1w
