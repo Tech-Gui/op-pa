@@ -418,10 +418,21 @@ router.post("/reading", async (req, res) => {
         }
 
         if (tankConfig) {
+          const latestWaterReading = await database.getLatestWaterReading(
+            tankConfig.tankId
+          );
+          const fallbackDistanceCm = Number.isFinite(latestWaterReading?.distanceCm)
+            ? latestWaterReading.distanceCm
+            : safeTankHeight(tankConfig);
+          const fallbackWaterLevelCm = Number.isFinite(latestWaterReading?.waterLevelCm)
+            ? latestWaterReading.waterLevelCm
+            : Math.max(safeTankHeight(tankConfig) - fallbackDistanceCm, 0);
+
           await database.insertWaterReading({
             tankId: tankConfig.tankId,
             sensorId: sensor_id,
-            distanceCm: null, // NO sensor data
+            distanceCm: fallbackDistanceCm,
+            waterLevelCm: fallbackWaterLevelCm,
             relayStatus: relays.water_pump,
           });
           log.info("Recorded relay-only water status sync", {
@@ -433,11 +444,24 @@ router.post("/reading", async (req, res) => {
 
       // 3. Record Irrigation Status if not already done
       if (relays?.irrigation && !responses.soil_processed) {
+        const latestSoilReading =
+          await database.SoilMoistureReading.getLatestByZone(HARD_ZONE_ID);
+        const fallbackMoisture = Number.isFinite(latestSoilReading?.moisturePercentage)
+          ? latestSoilReading.moisturePercentage
+          : 0;
+        const fallbackRawValue = Number.isFinite(latestSoilReading?.rawValue)
+          ? latestSoilReading.rawValue
+          : 0;
+
         await new database.SoilMoistureReading({
           zoneId: HARD_ZONE_ID,
           sensorId: sensor_id,
-          moisturePercentage: null, // NO sensor data
+          moisturePercentage: fallbackMoisture,
+          rawValue: fallbackRawValue,
+          temperature: latestSoilReading?.temperature ?? null,
           relayStatus: relays.irrigation,
+          irrigationTriggered: latestSoilReading?.irrigationTriggered ?? false,
+          stageInfo: latestSoilReading?.stageInfo ?? undefined,
         }).save();
         log.info("Recorded relay-only soil status sync", {
           sensor_id,
@@ -856,7 +880,7 @@ router.get("/status/:sensorId", async (req, res) => {
         soil: soilStatus,
         hasPendingCommands: queuedCount > 0,
         config: {
-          report_interval: 60, // Default or fetch from latest reading if available
+          report_interval: (waterStatus?.reportInterval ?? 1) * 60,
         },
         timestamp: new Date(),
       },

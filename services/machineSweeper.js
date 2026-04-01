@@ -7,8 +7,14 @@ async function sweepOffline() {
   try {
     const cutoff = new Date(Date.now() - OFFLINE_MINUTES * 60 * 1000);
     const candidates = await Machine.find({
-      $or: [{ lastHeartbeatAt: { $lt: cutoff } }, { lastHeartbeatAt: null }],
-      $or: [{ plcOn: true }, { status: { $ne: "offline" } }],
+      $and: [
+        {
+          $or: [{ lastHeartbeatAt: { $lt: cutoff } }, { lastHeartbeatAt: null }],
+        },
+        {
+          $or: [{ plcOn: true }, { status: { $ne: "offline" } }],
+        },
+      ],
     });
 
     for (const m of candidates) {
