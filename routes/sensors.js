@@ -118,18 +118,35 @@ router.post("/reading", async (req, res) => {
 
           // ===== SERVER-SIDE AUTOMATION (Defense in depth) =====
           if (tankConfig.automationEnabled) {
-            const pumpOnDist = tankConfig.pumpOnDistanceCm || 250;
-            const pumpOffDist = tankConfig.pumpOffDistanceCm || 50;
+            const pumpOnDist = tankConfig.pumpOnDistanceCm ?? 250;
+            const pumpOffDist = tankConfig.pumpOffDistanceCm ?? 50;
             const currentRelay = relays?.water_pump || "unknown";
+            const fiveMinsAgo = new Date(Date.now() - 5 * 60 * 1000);
 
             if (distanceCm > pumpOnDist && currentRelay === "off") {
-              const pending = await PendingCommand.findOne({ sensorId: sensor_id, target: "water_pump", status: { $in: ["queued", "dequeued"] }, action: "start" });
+              const pending = await PendingCommand.findOne({ 
+                sensorId: sensor_id, 
+                target: "water_pump", 
+                action: "start",
+                $or: [
+                  { status: "queued" },
+                  { status: "dequeued", updatedAt: { $gt: fiveMinsAgo } }
+                ]
+              });
               if (!pending) {
                 await new PendingCommand({ sensorId: sensor_id, action: "start", target: "water_pump", trigger: "auto" }).save();
                 log.info("Server-side auto: queued water_pump start", { sensor_id, distanceCm, pumpOnDist });
               }
             } else if (distanceCm < pumpOffDist && currentRelay === "on") {
-              const pending = await PendingCommand.findOne({ sensorId: sensor_id, target: "water_pump", status: { $in: ["queued", "dequeued"] }, action: "stop" });
+              const pending = await PendingCommand.findOne({ 
+                sensorId: sensor_id, 
+                target: "water_pump", 
+                action: "stop",
+                $or: [
+                  { status: "queued" },
+                  { status: "dequeued", updatedAt: { $gt: fiveMinsAgo } }
+                ]
+              });
               if (!pending) {
                 await new PendingCommand({ sensorId: sensor_id, action: "stop", target: "water_pump", trigger: "auto" }).save();
                 log.info("Server-side auto: queued water_pump stop", { sensor_id, distanceCm, pumpOffDist });
@@ -244,19 +261,36 @@ router.post("/reading", async (req, res) => {
           
           // ===== SERVER-SIDE AUTOMATION (Defense in depth) =====
           if (zoneConfig.automationEnabled) {
-            const dryThreshold = zoneConfig.soilDryThresholdPct || 30;
-            const wetThreshold = zoneConfig.soilWetThresholdPct || 70;
+            const dryThreshold = targets.minMoisture;
+            const wetThreshold = targets.maxMoisture;
             const currentRelay = relays?.irrigation || "unknown";
             const moisture = sensors.soil_moisture.value;
+            const fiveMinsAgo = new Date(Date.now() - 5 * 60 * 1000);
 
             if (moisture < dryThreshold && currentRelay === "off") {
-              const pending = await PendingCommand.findOne({ sensorId: sensor_id, target: "irrigation", status: { $in: ["queued", "dequeued"] }, action: "start" });
+              const pending = await PendingCommand.findOne({ 
+                sensorId: sensor_id, 
+                target: "irrigation", 
+                action: "start",
+                $or: [
+                  { status: "queued" },
+                  { status: "dequeued", updatedAt: { $gt: fiveMinsAgo } }
+                ]
+              });
               if (!pending) {
                 await new PendingCommand({ sensorId: sensor_id, action: "start", target: "irrigation", trigger: "auto" }).save();
                 log.info("Server-side auto: queued irrigation start", { sensor_id, moisture, dryThreshold });
               }
             } else if (moisture > wetThreshold && currentRelay === "on") {
-              const pending = await PendingCommand.findOne({ sensorId: sensor_id, target: "irrigation", status: { $in: ["queued", "dequeued"] }, action: "stop" });
+              const pending = await PendingCommand.findOne({ 
+                sensorId: sensor_id, 
+                target: "irrigation", 
+                action: "stop",
+                $or: [
+                  { status: "queued" },
+                  { status: "dequeued", updatedAt: { $gt: fiveMinsAgo } }
+                ]
+              });
               if (!pending) {
                 await new PendingCommand({ sensorId: sensor_id, action: "stop", target: "irrigation", trigger: "auto" }).save();
                 log.info("Server-side auto: queued irrigation stop", { sensor_id, moisture, wetThreshold });
@@ -783,12 +817,23 @@ router.get("/status/:sensorId", async (req, res) => {
     if (zoneConfig) {
       const latestSoilReading =
         await database.SoilMoistureReading.getLatestByZone(zoneConfig.zoneId);
+      
+      let targets;
+      try {
+        targets = await zoneConfig.getCurrentMoistureTargets();
+      } catch (err) {
+        targets = {
+          minMoisture: zoneConfig.soilDryThresholdPct ?? 30,
+          maxMoisture: zoneConfig.soilWetThresholdPct ?? 70,
+        };
+      }
+
       soilStatus = {
         zoneId: zoneConfig.zoneId,
         zoneName: zoneConfig.name,
         automationEnabled: zoneConfig.automationEnabled ?? true,
-        soilDryThresholdPct: zoneConfig.soilDryThresholdPct ?? 30,
-        soilWetThresholdPct: zoneConfig.soilWetThresholdPct ?? 70,
+        soilDryThresholdPct: targets.minMoisture,
+        soilWetThresholdPct: targets.maxMoisture,
         relayStatus: zoneConfig.relayStatus || 'unknown',
         latestReading: latestSoilReading,
       };

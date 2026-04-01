@@ -227,6 +227,8 @@ router.get("/zone-config", async (req, res) => {
           }
         : null,
       relayId: zoneConfig.relayId,
+      soilDryThresholdPct: zoneConfig.soilDryThresholdPct,
+      soilWetThresholdPct: zoneConfig.soilWetThresholdPct,
     };
 
     res.json({
@@ -1047,6 +1049,8 @@ router.get("/irrigation/status", async (req, res) => {
               irrigationSettings: zoneConfig.irrigationSettings,
               useStaticThresholds:
                 zoneConfig.irrigationSettings.useStaticThresholds,
+              soilDryThresholdPct: zoneConfig.soilDryThresholdPct,
+              soilWetThresholdPct: zoneConfig.soilWetThresholdPct,
             }
           : null,
       },

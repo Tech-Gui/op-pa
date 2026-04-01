@@ -141,11 +141,9 @@ const zoneConfigSchema = new mongoose.Schema(
     },
     soilDryThresholdPct: {
       type: Number,
-      default: 30,
     },
     soilWetThresholdPct: {
       type: Number,
-      default: 70,
     },
     irrigationSettings: {
       enabled: {
@@ -410,15 +408,16 @@ zoneConfigSchema.virtual("growthStage").get(function () {
 
 // FIXED METHOD: Method to get current moisture targets based on growth stage
 zoneConfigSchema.methods.getCurrentMoistureTargets = async function () {
-  // If user has set specific dry/wet thresholds, use those as primary targets
-  if (this.soilDryThresholdPct !== undefined && this.soilWetThresholdPct !== undefined) {
+  // 1. If user has specifically provided custom manual thresholds, use those
+  if (this.soilDryThresholdPct !== undefined && this.soilDryThresholdPct !== null) {
     return {
       minMoisture: this.soilDryThresholdPct,
-      maxMoisture: this.soilWetThresholdPct,
+      maxMoisture: this.soilWetThresholdPct || this.soilDryThresholdPct + 20,
       source: "custom_thresholds",
     };
   }
 
+  // 2. If 'useStaticThresholds' is enabled, use the old moistureThresholds field
   if (this.irrigationSettings.useStaticThresholds) {
     return {
       minMoisture: this.moistureThresholds.minMoisture,
@@ -427,15 +426,16 @@ zoneConfigSchema.methods.getCurrentMoistureTargets = async function () {
     };
   }
 
-  // Get crop profile
+  // 3. Try to get from Crop Profile
   const CropProfile = mongoose.model("CropProfile");
   const cropProfile = await CropProfile.findOne({ cropType: this.cropType });
 
   if (!cropProfile) {
+    // 4. Final Fallback - System Defaults
     return {
-      minMoisture: this.moistureThresholds.minMoisture,
-      maxMoisture: this.moistureThresholds.maxMoisture,
-      source: "fallback",
+      minMoisture: this.moistureThresholds.minMoisture || 30,
+      maxMoisture: this.moistureThresholds.maxMoisture || 70,
+      source: "fallback_system",
     };
   }
 
