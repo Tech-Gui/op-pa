@@ -135,7 +135,8 @@ router.post("/reading", async (req, res) => {
               });
               if (!pending) {
                 await new PendingCommand({ sensorId: sensor_id, action: "start", target: "water_pump", trigger: "auto" }).save();
-                log.info("Server-side auto: queued water_pump start", { sensor_id, distanceCm, pumpOnDist });
+                await database.TankConfig.findOneAndUpdate({ sensorId: sensor_id }, { $set: { relayStatus: 'on' } });
+                log.info("Server-side auto: queued water_pump start and updated DB", { sensor_id, distanceCm, pumpOnDist });
               }
             } else if (distanceCm < pumpOffDist && currentRelay === "on") {
               const pending = await PendingCommand.findOne({ 
@@ -149,7 +150,8 @@ router.post("/reading", async (req, res) => {
               });
               if (!pending) {
                 await new PendingCommand({ sensorId: sensor_id, action: "stop", target: "water_pump", trigger: "auto" }).save();
-                log.info("Server-side auto: queued water_pump stop", { sensor_id, distanceCm, pumpOffDist });
+                await database.TankConfig.findOneAndUpdate({ sensorId: sensor_id }, { $set: { relayStatus: 'off' } });
+                log.info("Server-side auto: queued water_pump stop and updated DB", { sensor_id, distanceCm, pumpOffDist });
               }
             }
           }
@@ -279,7 +281,8 @@ router.post("/reading", async (req, res) => {
               });
               if (!pending) {
                 await new PendingCommand({ sensorId: sensor_id, action: "start", target: "irrigation", trigger: "auto" }).save();
-                log.info("Server-side auto: queued irrigation start", { sensor_id, moisture, dryThreshold });
+                await database.ZoneConfig.findOneAndUpdate({ zoneId: HARD_ZONE_ID }, { $set: { relayStatus: 'on' } });
+                log.info("Server-side auto: queued irrigation start and updated DB", { sensor_id, moisture, dryThreshold });
               }
             } else if (moisture > wetThreshold && currentRelay === "on") {
               const pending = await PendingCommand.findOne({ 
@@ -293,7 +296,8 @@ router.post("/reading", async (req, res) => {
               });
               if (!pending) {
                 await new PendingCommand({ sensorId: sensor_id, action: "stop", target: "irrigation", trigger: "auto" }).save();
-                log.info("Server-side auto: queued irrigation stop", { sensor_id, moisture, wetThreshold });
+                await database.ZoneConfig.findOneAndUpdate({ zoneId: HARD_ZONE_ID }, { $set: { relayStatus: 'off' } });
+                log.info("Server-side auto: queued irrigation stop and updated DB", { sensor_id, moisture, wetThreshold });
               }
             }
           }

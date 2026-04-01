@@ -184,6 +184,11 @@ const zoneConfigSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    relayStatus: {
+      type: String,
+      enum: ["on", "off", "unknown"],
+      default: "unknown",
+    },
     notes: {
       type: String,
       default: "",
