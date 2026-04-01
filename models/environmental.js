@@ -1,7 +1,6 @@
-// Add this to your database.js file with your other schemas
-
 const mongoose = require("mongoose");
 
+// Environmental Reading Schema
 const environmentalReadingSchema = new mongoose.Schema(
   {
     sensorId: {
@@ -11,25 +10,27 @@ const environmentalReadingSchema = new mongoose.Schema(
     },
     location: {
       type: String,
-      default: "field_station_1",
+      default: "Unknown",
     },
-    temperature: {
+    temperatureCelsius: {
       type: Number,
-      validate: {
-        validator: function (v) {
-          return v === null || (v >= -50 && v <= 80); // Reasonable temperature range in Celsius
-        },
-        message: "Temperature must be between -50°C and 80°C",
-      },
+      required: true,
     },
-    humidity: {
+    humidityPercent: {
       type: Number,
-      validate: {
-        validator: function (v) {
-          return v === null || (v >= 0 && v <= 100); // Humidity percentage
-        },
-        message: "Humidity must be between 0% and 100%",
-      },
+      required: true,
+      min: 0,
+      max: 100,
+    },
+    uvIndex: {
+      type: Number,
+      default: null,
+      min: 0,
+    },
+    uvRiskLevel: {
+      type: String,
+      enum: ["Low", "Moderate", "High", "Very High", "Extreme"],
+      default: "Low",
     },
     timestamp: {
       type: Date,
@@ -42,70 +43,132 @@ const environmentalReadingSchema = new mongoose.Schema(
   }
 );
 
-// Add indexes for efficient querying
-environmentalReadingSchema.index({ sensorId: 1, timestamp: -1 });
-environmentalReadingSchema.index({ location: 1, timestamp: -1 });
+// Environmental Sensor Configuration Schema
+const environmentalSensorConfigSchema = new mongoose.Schema(
+  {
+    sensorId: {
+      type: String,
+      required: true,
+      unique: true,
+    },
+    location: {
+      type: String,
+      required: true,
+    },
+    description: {
+      type: String,
+      default: "",
+    },
+    isActive: {
+      type: Boolean,
+      default: true,
+    },
+    calibration: {
+      temperatureOffset: { type: Number, default: 0 },
+      humidityOffset: { type: Number, default: 0 },
+      uvOffset: { type: Number, default: 0 },
+    },
+    alertThresholds: {
+      minTemperature: { type: Number, default: 5 },
+      maxTemperature: { type: Number, default: 40 },
+      minHumidity: { type: Number, default: 20 },
+      maxHumidity: { type: Number, default: 85 },
+      maxUvIndex: { type: Number, default: 8 },
+    },
+    coordinates: {
+      latitude: { type: Number, default: null },
+      longitude: { type: Number, default: null },
+    },
+    lastSeen: {
+      type: Date,
+      default: null,
+    },
+  },
+  {
+    timestamps: true,
+  }
+);
 
-// Static method to get latest reading by sensor
+// Environmental Alert Schema
+const environmentalAlertSchema = new mongoose.Schema(
+  {
+    sensorId: {
+      type: String,
+      required: true,
+      index: true,
+    },
+    alertType: {
+      type: String,
+      enum: [
+        "temperature_high",
+        "temperature_low",
+        "humidity_high",
+        "humidity_low",
+        "uv_high",
+      ],
+      required: true,
+    },
+    severity: {
+      type: String,
+      enum: ["low", "medium", "high", "critical"],
+      default: "medium",
+    },
+    value: {
+      type: Number,
+      required: true,
+    },
+    threshold: {
+      type: Number,
+      required: true,
+    },
+    message: {
+      type: String,
+      required: true,
+    },
+    isResolved: {
+      type: Boolean,
+      default: false,
+    },
+    resolvedAt: {
+      type: Date,
+      default: null,
+    },
+    timestamp: {
+      type: Date,
+      default: Date.now,
+      index: true,
+    },
+  },
+  {
+    timestamps: true,
+  }
+);
+
+// Static methods
 environmentalReadingSchema.statics.getLatestBySensor = function (sensorId) {
   return this.findOne({ sensorId }).sort({ timestamp: -1 });
 };
 
-// Static method to get readings by date range
-environmentalReadingSchema.statics.getByDateRange = function (
-  sensorId,
-  startDate,
-  endDate
-) {
-  const query = {
-    timestamp: {
-      $gte: new Date(startDate),
-      $lte: new Date(endDate),
-    },
-  };
-
-  if (sensorId) {
-    query.sensorId = sensorId;
-  }
-
-  return this.find(query).sort({ timestamp: -1 });
-};
-
-// Static method to get environmental statistics
-environmentalReadingSchema.statics.getStats = function (sensorId, hours = 24) {
-  const startTime = new Date(Date.now() - hours * 60 * 60 * 1000);
-
-  return this.aggregate([
+environmentalSensorConfigSchema.statics.updateLastSeen = function (sensorId, readingData) {
+  return this.findOneAndUpdate(
+    { sensorId },
     {
-      $match: {
-        sensorId: sensorId,
-        timestamp: { $gte: startTime },
+      lastSeen: new Date(),
+      $setOnInsert: {
+        location: readingData.location || "Unknown",
+        isActive: true,
       },
     },
-    {
-      $group: {
-        _id: null,
-        readingCount: { $sum: 1 },
-        avgTemperature: { $avg: "$temperature" },
-        minTemperature: { $min: "$temperature" },
-        maxTemperature: { $max: "$temperature" },
-        avgHumidity: { $avg: "$humidity" },
-        minHumidity: { $min: "$humidity" },
-        maxHumidity: { $max: "$humidity" },
-        latestReading: { $last: "$$ROOT" },
-      },
-    },
-  ]);
+    { upsert: true, new: true }
+  );
 };
 
-const EnvironmentalReading = mongoose.model(
-  "EnvironmentalReading",
-  environmentalReadingSchema
-);
+const EnvironmentalReading = mongoose.model("EnvironmentalReading", environmentalReadingSchema);
+const EnvironmentalSensorConfig = mongoose.model("EnvironmentalSensorConfig", environmentalSensorConfigSchema);
+const EnvironmentalAlert = mongoose.model("EnvironmentalAlert", environmentalAlertSchema);
 
-// Add this to your module.exports
 module.exports = {
-  // ... your existing exports
   EnvironmentalReading,
-  // ... rest of exports
+  EnvironmentalSensorConfig,
+  EnvironmentalAlert,
 };

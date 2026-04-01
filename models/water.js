@@ -1,8 +1,9 @@
-// Add this to your existing models/water.js file or create it if it doesn't exist
-
 const mongoose = require("mongoose");
 
-// Existing WaterReading Schema (keep as is)
+// ==============================
+// SCHEMAS
+// ==============================
+
 const waterReadingSchema = new mongoose.Schema(
   {
     tankId: {
@@ -42,7 +43,6 @@ const waterReadingSchema = new mongoose.Schema(
   }
 );
 
-// Existing TankConfig Schema (keep as is)
 const tankConfigSchema = new mongoose.Schema(
   {
     tankId: {
@@ -95,13 +95,25 @@ const tankConfigSchema = new mongoose.Schema(
       type: Number,
       default: 1, // minutes
     },
+    pumpOnDistanceCm: {
+      type: Number,
+      default: 250,
+    },
+    pumpOffDistanceCm: {
+      type: Number,
+      default: 50,
+    },
+    relayStatus: {
+      type: String,
+      enum: ["on", "off", "unknown"],
+      default: "unknown",
+    },
   },
   {
     timestamps: true,
   }
 );
 
-// NEW: Pump Log Schema - ADD THIS
 const pumpLogSchema = new mongoose.Schema(
   {
     tankId: {
@@ -144,7 +156,7 @@ const pumpLogSchema = new mongoose.Schema(
       min: 0,
     },
     duration: {
-      type: Number, // Duration in minutes (calculated for stop actions)
+      type: Number, // Duration in minutes
       default: null,
       min: 0,
     },
@@ -159,13 +171,20 @@ const pumpLogSchema = new mongoose.Schema(
   }
 );
 
-// Add compound indexes
+// ==============================
+// INDEXES
+// ==============================
+
 waterReadingSchema.index({ tankId: 1, timestamp: -1 });
 waterReadingSchema.index({ sensorId: 1, timestamp: -1 });
 pumpLogSchema.index({ tankId: 1, timestamp: -1 });
 pumpLogSchema.index({ tankId: 1, action: 1, timestamp: -1 });
 
-// Static methods for WaterReading (keep existing ones)
+// ==============================
+// STATIC METHODS
+// ==============================
+
+// Water Reading static methods
 waterReadingSchema.statics.getLatestByTank = function (tankId) {
   return this.findOne({ tankId }).sort({ timestamp: -1 });
 };
@@ -174,14 +193,49 @@ waterReadingSchema.statics.getLatestBySensor = function (sensorId) {
   return this.findOne({ sensorId }).sort({ timestamp: -1 });
 };
 
-// NEW: Pump Log Static Methods - ADD THESE
+waterReadingSchema.statics.getTankStats = async function (tankId, hours = 24) {
+  const startDate = new Date();
+  startDate.setHours(startDate.getHours() - hours);
 
-// Get latest pump action for a tank
+  const readings = await this.find({
+    tankId,
+    timestamp: { $gte: startDate },
+    waterLevelCm: { $ne: null },
+  });
+
+  if (readings.length === 0) {
+    return {
+      tankId,
+      readingCount: 0,
+      averageWaterLevel: null,
+      minWaterLevel: null,
+      maxWaterLevel: null,
+      latestReading: null,
+    };
+  }
+
+  const waterLevels = readings.map((r) => r.waterLevelCm);
+  const latest = await this.getLatestByTank(tankId);
+
+  return {
+    tankId,
+    readingCount: readings.length,
+    averageWaterLevel:
+      Math.round(
+        (waterLevels.reduce((a, b) => a + b, 0) / waterLevels.length) * 100
+      ) / 100,
+    minWaterLevel: Math.min(...waterLevels),
+    maxWaterLevel: Math.max(...waterLevels),
+    latestReading: latest,
+    periodHours: hours,
+  };
+};
+
+// Pump Log static methods
 pumpLogSchema.statics.getLatestByTank = function (tankId) {
   return this.findOne({ tankId }).sort({ timestamp: -1 });
 };
 
-// Check if pump is currently running
 pumpLogSchema.statics.isPumpRunning = async function (tankId) {
   const latestStart = await this.findOne({
     tankId,
@@ -196,10 +250,9 @@ pumpLogSchema.statics.isPumpRunning = async function (tankId) {
     timestamp: { $gt: latestStart.timestamp },
   });
 
-  return !latestStop; // Pump is running if there's no stop after the latest start
+  return !latestStop;
 };
 
-// Get pump statistics for a tank
 pumpLogSchema.statics.getPumpStats = async function (tankId, hours = 24) {
   const startDate = new Date();
   startDate.setHours(startDate.getHours() - hours);
@@ -224,7 +277,6 @@ pumpLogSchema.statics.getPumpStats = async function (tankId, hours = 24) {
   let sessions = [];
   let currentSession = null;
 
-  // Group start/stop pairs into sessions
   for (const log of logs) {
     if (log.action === "start") {
       currentSession = { start: log, stop: null };
@@ -235,7 +287,6 @@ pumpLogSchema.statics.getPumpStats = async function (tankId, hours = 24) {
     }
   }
 
-  // Calculate statistics
   const completedSessions = sessions.filter((s) => s.stop);
   const totalRunTime = completedSessions.reduce((total, session) => {
     const duration = (session.stop.timestamp - session.start.timestamp) / 60000;
@@ -267,7 +318,41 @@ pumpLogSchema.statics.getPumpStats = async function (tankId, hours = 24) {
   };
 };
 
-// Pre-save middleware to calculate duration for stop actions
+// ==============================
+// MIDDLEWARE (Hooks)
+// ==============================
+
+// Calculate water level if not provided
+waterReadingSchema.pre("save", async function (next) {
+  if (!this.waterLevelCm && this.distanceCm) {
+    try {
+      // Use this.constructor instead of mongoose.model if possible, but for TankConfig we need the model
+      const tankConfig = await mongoose.model("TankConfig").findOne({ tankId: this.tankId });
+      if (tankConfig) {
+        this.waterLevelCm = Math.max(
+          0,
+          tankConfig.tankHeightCm - this.distanceCm
+        );
+      }
+    } catch (error) {
+      console.warn("Could not calculate water level:", error.message);
+    }
+  }
+  next();
+});
+
+// Calculate tank capacity from height and radius
+tankConfigSchema.pre("save", function (next) {
+  if (this.tankHeightCm && this.tankRadiusCm) {
+    // V = π * r² * h / 1000 (cm³ to Liters)
+    this.maxCapacityLiters = Math.round(
+      (Math.PI * Math.pow(this.tankRadiusCm, 2) * this.tankHeightCm) / 1000
+    );
+  }
+  next();
+});
+
+// Calculate pump duration for stop actions
 pumpLogSchema.pre("save", async function (next) {
   if (this.action === "stop" && !this.duration) {
     try {
@@ -281,7 +366,7 @@ pumpLogSchema.pre("save", async function (next) {
 
       if (latestStart) {
         const durationMs = this.timestamp - latestStart.timestamp;
-        this.duration = Math.round(durationMs / 60000); // Convert to minutes
+        this.duration = Math.round(durationMs / 60000);
       }
     } catch (error) {
       console.warn("Could not calculate pump duration:", error.message);
@@ -290,13 +375,16 @@ pumpLogSchema.pre("save", async function (next) {
   next();
 });
 
-// Create models
-const WaterReading = mongoose.model("WaterReading", waterReadingSchema);
-const TankConfig = mongoose.model("TankConfig", tankConfigSchema);
-const PumpLog = mongoose.model("PumpLog", pumpLogSchema); // ADD THIS LINE
+// ==============================
+// EXPORTS
+// ==============================
+
+const WaterReading = mongoose.models.WaterReading || mongoose.model("WaterReading", waterReadingSchema);
+const TankConfig = mongoose.models.TankConfig || mongoose.model("TankConfig", tankConfigSchema);
+const PumpLog = mongoose.models.PumpLog || mongoose.model("PumpLog", pumpLogSchema);
 
 module.exports = {
   WaterReading,
   TankConfig,
-  PumpLog, // ADD THIS LINE
+  PumpLog,
 };

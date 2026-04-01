@@ -116,6 +116,27 @@ router.post("/reading", async (req, res) => {
             );
           }
 
+          // ===== SERVER-SIDE AUTOMATION (Defense in depth) =====
+          if (tankConfig.automationEnabled) {
+            const pumpOnDist = tankConfig.pumpOnDistanceCm || 250;
+            const pumpOffDist = tankConfig.pumpOffDistanceCm || 50;
+            const currentRelay = relays?.water_pump || "unknown";
+
+            if (distanceCm > pumpOnDist && currentRelay === "off") {
+              const pending = await PendingCommand.findOne({ sensorId: sensor_id, target: "water_pump", status: { $in: ["queued", "dequeued"] }, action: "start" });
+              if (!pending) {
+                await new PendingCommand({ sensorId: sensor_id, action: "start", target: "water_pump", trigger: "auto" }).save();
+                log.info("Server-side auto: queued water_pump start", { sensor_id, distanceCm, pumpOnDist });
+              }
+            } else if (distanceCm < pumpOffDist && currentRelay === "on") {
+              const pending = await PendingCommand.findOne({ sensorId: sensor_id, target: "water_pump", status: { $in: ["queued", "dequeued"] }, action: "stop" });
+              if (!pending) {
+                await new PendingCommand({ sensorId: sensor_id, action: "stop", target: "water_pump", trigger: "auto" }).save();
+                log.info("Server-side auto: queued water_pump stop", { sensor_id, distanceCm, pumpOffDist });
+              }
+            }
+          }
+
           responses.water = {
             success: true,
             data: result.data,
@@ -219,6 +240,28 @@ router.post("/reading", async (req, res) => {
               { zoneId: zoneConfig.zoneId },
               { lastIrrigation: new Date() }
             );
+          }
+          
+          // ===== SERVER-SIDE AUTOMATION (Defense in depth) =====
+          if (zoneConfig.automationEnabled) {
+            const dryThreshold = zoneConfig.soilDryThresholdPct || 30;
+            const wetThreshold = zoneConfig.soilWetThresholdPct || 70;
+            const currentRelay = relays?.irrigation || "unknown";
+            const moisture = sensors.soil_moisture.value;
+
+            if (moisture < dryThreshold && currentRelay === "off") {
+              const pending = await PendingCommand.findOne({ sensorId: sensor_id, target: "irrigation", status: { $in: ["queued", "dequeued"] }, action: "start" });
+              if (!pending) {
+                await new PendingCommand({ sensorId: sensor_id, action: "start", target: "irrigation", trigger: "auto" }).save();
+                log.info("Server-side auto: queued irrigation start", { sensor_id, moisture, dryThreshold });
+              }
+            } else if (moisture > wetThreshold && currentRelay === "on") {
+              const pending = await PendingCommand.findOne({ sensorId: sensor_id, target: "irrigation", status: { $in: ["queued", "dequeued"] }, action: "stop" });
+              if (!pending) {
+                await new PendingCommand({ sensorId: sensor_id, action: "stop", target: "irrigation", trigger: "auto" }).save();
+                log.info("Server-side auto: queued irrigation stop", { sensor_id, moisture, wetThreshold });
+              }
+            }
           }
 
           responses.soil = {
@@ -729,6 +772,8 @@ router.get("/status/:sensorId", async (req, res) => {
           tankHeightCm: tankConfig.tankHeightCm,
           maxCapacityLiters: tankConfig.maxCapacityLiters,
           automationEnabled: tankConfig.automationEnabled ?? true,
+          pumpOnDistanceCm: tankConfig.pumpOnDistanceCm ?? 250,
+          pumpOffDistanceCm: tankConfig.pumpOffDistanceCm ?? 50,
           reportInterval: tankConfig.reportInterval ?? 1,
           relayStatus: tankConfig.relayStatus || 'unknown',
           latestReading: latestWaterReading,
@@ -742,6 +787,8 @@ router.get("/status/:sensorId", async (req, res) => {
         zoneId: zoneConfig.zoneId,
         zoneName: zoneConfig.name,
         automationEnabled: zoneConfig.automationEnabled ?? true,
+        soilDryThresholdPct: zoneConfig.soilDryThresholdPct ?? 30,
+        soilWetThresholdPct: zoneConfig.soilWetThresholdPct ?? 70,
         relayStatus: zoneConfig.relayStatus || 'unknown',
         latestReading: latestSoilReading,
       };

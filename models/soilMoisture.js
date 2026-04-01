@@ -139,6 +139,14 @@ const zoneConfigSchema = new mongoose.Schema(
       dayInStage: Number,
       startDate: Date,
     },
+    soilDryThresholdPct: {
+      type: Number,
+      default: 30,
+    },
+    soilWetThresholdPct: {
+      type: Number,
+      default: 70,
+    },
     irrigationSettings: {
       enabled: {
         type: Boolean,
@@ -402,6 +410,15 @@ zoneConfigSchema.virtual("growthStage").get(function () {
 
 // FIXED METHOD: Method to get current moisture targets based on growth stage
 zoneConfigSchema.methods.getCurrentMoistureTargets = async function () {
+  // If user has set specific dry/wet thresholds, use those as primary targets
+  if (this.soilDryThresholdPct !== undefined && this.soilWetThresholdPct !== undefined) {
+    return {
+      minMoisture: this.soilDryThresholdPct,
+      maxMoisture: this.soilWetThresholdPct,
+      source: "custom_thresholds",
+    };
+  }
+
   if (this.irrigationSettings.useStaticThresholds) {
     return {
       minMoisture: this.moistureThresholds.minMoisture,

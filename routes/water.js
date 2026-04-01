@@ -650,6 +650,8 @@ router.put("/tank-config", async (req, res) => {
       tank_radius_cm,
       max_capacity_liters,
       min_threshold_cm,
+      pump_on_distance_cm,
+      pump_off_distance_cm,
       location,
       sensor_id,
     } = req.body;
@@ -667,6 +669,10 @@ router.put("/tank-config", async (req, res) => {
       updateData.maxCapacityLiters = max_capacity_liters;
     if (min_threshold_cm !== undefined)
       updateData.minThresholdCm = min_threshold_cm;
+    if (pump_on_distance_cm !== undefined)
+      updateData.pumpOnDistanceCm = pump_on_distance_cm;
+    if (pump_off_distance_cm !== undefined)
+      updateData.pumpOffDistanceCm = pump_off_distance_cm;
     if (location !== undefined) updateData.location = location;
     if (sensor_id !== undefined) {
       updateData.sensorId = sensor_id;

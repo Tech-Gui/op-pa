@@ -1077,6 +1077,9 @@ router.put("/zone/:zoneId", async (req, res) => {
       irrigation_duration,
       cooldown_minutes,
       use_static_thresholds,
+      soil_dry_threshold_pct,
+      soil_wet_threshold_pct,
+      automation_enabled,
     } = req.body;
 
     const existingZone = await database.ZoneConfig.findOne({ zoneId });
@@ -1103,6 +1106,9 @@ router.put("/zone/:zoneId", async (req, res) => {
       ...(validPlantingDate && { plantingDate: validPlantingDate }),
       ...(sensor_id !== undefined && { sensorId: sensor_id || null }),
       ...(relay_id !== undefined && { relayId: relay_id || null }),
+      ...(soil_dry_threshold_pct !== undefined && { soilDryThresholdPct: parseInt(soil_dry_threshold_pct) }),
+      ...(soil_wet_threshold_pct !== undefined && { soilWetThresholdPct: parseInt(soil_wet_threshold_pct) }),
+      ...(automation_enabled !== undefined && { automationEnabled: automation_enabled === true || automation_enabled === 'true' }),
     };
 
     // Update moisture thresholds if provided
